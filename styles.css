@@ -255,3 +255,16 @@ input[type="range"] { flex: 1; padding: 0; accent-color: var(--accent); }
   .hbar { grid-template-columns: minmax(80px, 110px) minmax(0, 1fr) auto; }
   .hbar .val small { display: none; }
 }
+
+/* ---------- Sincronización ---------- */
+.sync-pill {
+  order: 2; margin-left: auto;
+  font: inherit; font-size: 0.8rem; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+  padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+}
+.topbar .tabs { order: 3; }
+@media (min-width: 761px) { .topbar .tabs { order: 1; } }
+.sync-pill[data-status="ok"] { color: var(--good); }
+.sync-pill[data-status="reconnect"], .sync-pill[data-status="error"] { color: var(--bad); border-color: var(--bad); }
+.sync-pill[data-status="off"] { background: var(--accent); color: #fff; border-color: transparent; }

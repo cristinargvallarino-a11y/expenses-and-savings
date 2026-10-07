@@ -19,6 +19,7 @@
 <body>
   <header class="topbar">
     <div class="brand">💶 Mis Finanzas</div>
+    <button class="sync-pill hidden" id="sync-pill" type="button"></button>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="resumen" role="tab">Resumen</button>
       <button class="tab" data-view="movimientos" role="tab">Movimientos</button>
@@ -223,9 +224,13 @@
           </label>
         </div>
       </article>
+      <article class="card hidden" id="account-card">
+        <h2>Cuenta de Google</h2>
+        <div id="account-box"></div>
+      </article>
       <article class="card">
         <h2>Tus datos</h2>
-        <p class="muted small">Todo se guarda solo en este navegador. Haz copias de seguridad de vez en cuando.</p>
+        <p class="muted small">Si no has entrado con Google, todo se guarda solo en este navegador: haz copias de seguridad de vez en cuando.</p>
         <div class="row gap wrap">
           <button class="btn" id="export-json">Descargar copia (JSON)</button>
           <label class="btn file-btn">Restaurar copia
@@ -242,8 +247,10 @@
   <div id="tooltip" role="tooltip"></div>
   <div id="toast" aria-live="polite"></div>
 
+  <script src="config.js"></script>
   <script src="categories.js"></script>
   <script src="finance.js"></script>
+  <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

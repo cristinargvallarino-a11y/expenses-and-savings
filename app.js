@@ -6,6 +6,7 @@ const DEFAULT_STATE = {
   settings: { currency: 'EUR', paceMonths: 3, manualPace: '' },
   transactions: [],
   goals: [],
+  deleted: {},
 };
 
 let state = loadState();
@@ -37,9 +38,60 @@ function loadState() {
   return structuredClone(DEFAULT_STATE);
 }
 
-function save() {
+// Para sincronizar entre dispositivos, cada movimiento/objetivo lleva la fecha
+// de su último cambio (`updatedAt`) y los borrados quedan anotados en
+// `state.deleted`. save() lo calcula solo comparando con lo último guardado.
+let snapshot = indexState(state);
+
+function withoutTimestamp(r) {
+  const { updatedAt, ...rest } = r || {};
+  return JSON.stringify(rest);
+}
+
+function indexState(s) {
+  return {
+    transactions: new Map(s.transactions.map((r) => [r.id, withoutTimestamp(r)])),
+    goals: new Map(s.goals.map((r) => [r.id, withoutTimestamp(r)])),
+    settings: withoutTimestamp(s.settings),
+    deleted: { ...(s.deleted || {}) },
+  };
+}
+
+function stampChanges() {
+  const now = Date.now();
+  const deleted = { ...snapshot.deleted, ...(state.deleted || {}) };
+  for (const key of ['transactions', 'goals']) {
+    const present = new Set();
+    for (const r of state[key]) {
+      present.add(r.id);
+      if (!r.updatedAt || snapshot[key].get(r.id) !== withoutTimestamp(r)) r.updatedAt = now;
+      // Algo que está presente (p. ej. al restaurar una copia) vuelve a existir.
+      if (deleted[r.id]) { delete deleted[r.id]; r.updatedAt = now; }
+    }
+    for (const id of snapshot[key].keys()) if (!present.has(id)) deleted[id] = now;
+  }
+  if (!state.settings.updatedAt || withoutTimestamp(state.settings) !== snapshot.settings) state.settings.updatedAt = now;
+  state.deleted = deleted;
+  snapshot = indexState(state);
+}
+
+function persistLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   catch (e) { toast('No se pudo guardar en este navegador. Descarga una copia en Ajustes.'); }
+}
+
+function save() {
+  stampChanges();
+  persistLocal();
+  scheduleSync();
+}
+
+/** Sustituye el estado entero (datos de la nube, cerrar sesión…) sin marcarlo como cambio local. */
+function replaceState(next) {
+  state = { ...structuredClone(DEFAULT_STATE), ...next, settings: { ...DEFAULT_STATE.settings, ...(next.settings || {}) } };
+  state.deleted = state.deleted || {};
+  snapshot = indexState(state);
+  persistLocal();
 }
 
 function money(x, opts = {}) {
@@ -814,7 +866,7 @@ $('#import-json').addEventListener('change', async (e) => {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.transactions) || !Array.isArray(data.goals)) throw new Error('formato');
     if (!confirm('Esto reemplazará tus datos actuales por los de la copia. ¿Continuar?')) return;
-    state = { ...DEFAULT_STATE, ...data, settings: { ...DEFAULT_STATE.settings, ...data.settings } };
+    state = { ...structuredClone(DEFAULT_STATE), ...data, settings: { ...DEFAULT_STATE.settings, ...data.settings }, deleted: state.deleted };
     save();
     renderAll();
     toast('Copia restaurada');
@@ -826,10 +878,10 @@ $('#import-json').addEventListener('change', async (e) => {
 });
 $('#wipe').addEventListener('click', () => {
   if (!confirm('¿Seguro que quieres borrar TODOS tus datos? No se puede deshacer.')) return;
-  state = structuredClone(DEFAULT_STATE);
+  state = { ...structuredClone(DEFAULT_STATE), deleted: state.deleted };
   save();
   renderAll();
-  toast('Datos borrados');
+  toast(isConnected() ? 'Datos borrados (también en Google Drive)' : 'Datos borrados');
 });
 $('#load-demo').addEventListener('click', () => {
   if (state.transactions.length && !confirm('Se añadirán datos de ejemplo a los tuyos. ¿Continuar?')) return;
@@ -878,6 +930,194 @@ function demoData() {
   };
 }
 
+// ---------- NUBE (Google Drive) ----------
+
+const OWNER_KEY = 'mf-owner';
+const CONNECTED_KEY = 'mf-connected';
+const SILENT_AT_KEY = 'mf-silent-at';
+let syncStatus = 'off';
+let syncing = false;
+let syncAgain = false;
+let syncTimer = null;
+let driveFileId = null;
+let lastSyncAt = null;
+
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* sin almacenamiento */ } }
+function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { /* sin almacenamiento */ } }
+
+function cloudOn() { return typeof Cloud !== 'undefined' && Cloud && Cloud.enabled(); }
+function isConnected() { return lsGet(CONNECTED_KEY) === '1'; }
+
+const SYNC_LABELS = {
+  off: '☁️ Guardar en Google',
+  syncing: '⟳ Sincronizando…',
+  ok: '✓ Sincronizado',
+  offline: '○ Sin conexión',
+  reconnect: '⚠️ Reconectar',
+  error: '⚠️ Reintentar',
+};
+
+function setSyncStatus(status) {
+  syncStatus = status;
+  if (status === 'ok') lastSyncAt = new Date();
+  const pill = $('#sync-pill');
+  pill.textContent = SYNC_LABELS[status];
+  pill.dataset.status = status;
+  pill.title = status === 'ok' && lastSyncAt ? `Última sincronización: ${lastSyncAt.toLocaleTimeString('es-ES')}` : '';
+  renderAccount();
+}
+
+function renderAccount() {
+  const box = $('#account-box');
+  if (!box) return;
+  const owner = lsGet(OWNER_KEY);
+  if (!isConnected()) {
+    box.innerHTML = `
+      <p>Entra con tu cuenta de Google para guardar tus datos en tu Google Drive y verlos en todos tus dispositivos.
+      Se guardan en una carpeta oculta de tu Drive que solo esta app puede usar; nadie más los ve.</p>
+      <button class="btn primary" data-cloud="signin">Entrar con Google</button>
+      ${state.transactions.length || state.goals.length ? '<p class="muted small">Los datos que ya tienes en este dispositivo se subirán a tu cuenta.</p>' : ''}`;
+    return;
+  }
+  const statusText = {
+    ok: `Sincronizado${lastSyncAt ? ' a las ' + lastSyncAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : ''}.`,
+    syncing: 'Sincronizando…',
+    offline: 'Sin conexión: los cambios se guardan aquí y se subirán al volver la conexión.',
+    reconnect: 'La sesión de Google ha caducado. Tus cambios están a salvo en este dispositivo; reconecta para subirlos.',
+    error: 'No se pudo sincronizar. Vuelve a intentarlo en un momento.',
+    off: '',
+  }[syncStatus];
+  box.innerHTML = `
+    <p>Conectada como <strong>${esc(owner || '')}</strong></p>
+    <p class="muted small">${statusText}</p>
+    <div class="row gap wrap">
+      ${syncStatus === 'reconnect'
+        ? '<button class="btn primary" data-cloud="reconnect">Reconectar con Google</button>'
+        : '<button class="btn" data-cloud="sync">Sincronizar ahora</button>'}
+      <button class="btn ghost" data-cloud="signout">Cerrar sesión</button>
+    </div>`;
+}
+
+function startSignIn(reconnect) {
+  persistLocal();
+  Cloud.signIn(reconnect ? { hint: lsGet(OWNER_KEY) || '' } : {});
+}
+
+function onCloudAction(action) {
+  if (action === 'signin' || action === 'off') startSignIn(false);
+  else if (action === 'reconnect') startSignIn(true);
+  else if (action === 'sync' || action === 'error' || action === 'offline' || action === 'ok') syncNow();
+  else if (action === 'signout') signOut();
+}
+
+$('#sync-pill').addEventListener('click', () => onCloudAction(syncStatus === 'reconnect' ? 'reconnect' : syncStatus));
+$('#account-box').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-cloud]');
+  if (btn) onCloudAction(btn.dataset.cloud);
+});
+
+function scheduleSync() {
+  if (!cloudOn() || !isConnected()) return;
+  if (!Cloud.token()) { setSyncStatus('reconnect'); return; }
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 1200);
+}
+
+async function syncNow() {
+  if (!cloudOn() || !isConnected()) return;
+  if (!Cloud.token()) { setSyncStatus('reconnect'); return; }
+  if (syncing) { syncAgain = true; return; }
+  syncing = true;
+  clearTimeout(syncTimer);
+  setSyncStatus('syncing');
+  try {
+    const remote = await Cloud.download();
+    driveFileId = remote.id;
+    // Se junta con el estado actual (ya incluye lo que se haya tocado mientras descargaba).
+    const merged = mergeStates(state, remote.data);
+    const localChanged = canonicalState(merged) !== canonicalState(state);
+    replaceState(merged);
+    if (localChanged) renderAll();
+    if (!remote.data || canonicalState(state) !== canonicalState(remote.data)) {
+      driveFileId = await Cloud.upload(driveFileId, state);
+    }
+    setSyncStatus('ok');
+  } catch (e) {
+    handleSyncError(e);
+  } finally {
+    syncing = false;
+    if (syncAgain) { syncAgain = false; syncNow(); }
+  }
+}
+
+function handleSyncError(e) {
+  if (e instanceof Cloud.AuthError) setSyncStatus('reconnect');
+  else if (!navigator.onLine || e instanceof TypeError) setSyncStatus('offline');
+  else { setSyncStatus('error'); console.error(e); }
+}
+
+async function onSignedIn() {
+  const email = await Cloud.userEmail();
+  const owner = lsGet(OWNER_KEY);
+  if (owner && owner !== email) {
+    const ok = confirm(`Los datos de este dispositivo son de ${owner} y has entrado como ${email}.\n\n`
+      + `Si continúas, aquí se cargarán los datos de ${email}. Los de ${owner} siguen en su Google Drive `
+      + '(salvo cambios que no se llegaran a sincronizar).');
+    if (!ok) { Cloud.signOut(); setSyncStatus('reconnect'); return; }
+    replaceState(structuredClone(DEFAULT_STATE));
+    renderAll();
+  }
+  const firstTime = !isConnected();
+  lsSet(OWNER_KEY, email);
+  lsSet(CONNECTED_KEY, '1');
+  await syncNow();
+  if (firstTime && syncStatus === 'ok') toast(`Conectada a Google como ${email}`);
+}
+
+async function signOut() {
+  if (!confirm('Se cerrará la sesión y se borrarán los datos de ESTE dispositivo. Seguirán guardados en tu Google Drive. ¿Continuar?')) return;
+  if (Cloud.token()) {
+    await syncNow();
+    if (syncStatus !== 'ok' && !confirm('No se han podido subir los últimos cambios a Google. Si sigues, se perderán. ¿Cerrar sesión igualmente?')) return;
+  }
+  Cloud.signOut();
+  lsDel(OWNER_KEY);
+  lsDel(CONNECTED_KEY);
+  replaceState(structuredClone(DEFAULT_STATE));
+  setSyncStatus('off');
+  renderAll();
+  toast('Sesión cerrada');
+}
+
+async function initCloud() {
+  if (!cloudOn()) return;
+  $('#sync-pill').classList.remove('hidden');
+  $('#account-card').classList.remove('hidden');
+  const back = Cloud.handleRedirect();
+  if (back && back.error && !['interaction_required', 'login_required', 'consent_required'].includes(back.error)) {
+    toast(back.error === 'access_denied' ? 'Has cancelado el acceso a Google' : 'No se pudo conectar con Google');
+  }
+  if (Cloud.token()) {
+    try { await onSignedIn(); } catch (e) { handleSyncError(e); }
+    return;
+  }
+  if (!isConnected()) { setSyncStatus('off'); return; }
+  // Sesión caducada: se intenta renovar sin pedir nada (como mucho una vez por minuto).
+  const lastTry = Number(lsGet(SILENT_AT_KEY)) || 0;
+  if (!back && navigator.onLine && Date.now() - lastTry > 60000) {
+    lsSet(SILENT_AT_KEY, String(Date.now()));
+    Cloud.signIn({ silent: true, hint: lsGet(OWNER_KEY) || '' });
+    return;
+  }
+  setSyncStatus(navigator.onLine ? 'reconnect' : 'offline');
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && cloudOn() && isConnected()) syncNow();
+});
+window.addEventListener('online', () => { if (cloudOn() && isConnected()) syncNow(); });
+
 // ---------- Arranque ----------
 
 function renderAll() {
@@ -885,7 +1125,7 @@ function renderAll() {
   if (active === 'view-resumen') renderResumen();
   if (active === 'view-movimientos') renderMovimientos();
   if (active === 'view-ahorro') renderAhorro();
-  if (active === 'view-ajustes') renderAjustes();
+  if (active === 'view-ajustes') { renderAjustes(); renderAccount(); }
 }
 
 let resizeTimer;
@@ -898,3 +1138,4 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 $('#list-month').value = localMonth();
 resetTxForm();
 renderAll();
+initCloud();

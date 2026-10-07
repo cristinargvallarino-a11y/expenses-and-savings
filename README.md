@@ -29,6 +29,12 @@ App web para registrar **gastos, ingresos, ahorro e inversión**. Sin instalaci�
 - Para cada objetivo: **cuánto tardarás en llegar y en qué mes**, y si llegas a tiempo a la fecha límite (y cuánto necesitarías al mes).
 - Simulador "¿y si ahorrase X € más al mes?" y gráfico de proyección con interés compuesto.
 
+## Guardar en Google (varios dispositivos y usuarios)
+
+Con **Entrar con Google**, los datos se guardan en una carpeta oculta del Google Drive de cada usuario (solo esta app puede usarla) y se sincronizan entre dispositivos. Cada persona entra con su cuenta y solo ve sus datos.
+
+Para activarlo hay que poner el *ID de cliente* de Google Cloud en `config.js`.
+
 ## Estructura
 
 | Archivo | Contenido |
@@ -38,6 +44,8 @@ App web para registrar **gastos, ingresos, ahorro e inversión**. Sin instalaci�
 | `categories.js` | Grupos, categorías y clasificador por palabras clave |
 | `finance.js` | Cálculos: resúmenes, ritmo de ahorro, tiempo hasta objetivo |
 | `app.js` | Estado, vistas y gráficos |
+| `sync.js` | Inicio de sesión con Google y sincronización con Drive |
+| `config.js` | Configuración (ID de cliente de Google) |
 | `manifest.webmanifest`, `sw.js`, `icons/` | Instalación en el móvil y uso sin conexión |
 
 Para añadir palabras a la clasificación automática, edita las listas `keywords` de `categories.js`.
