@@ -1,22 +1,46 @@
 // Lectura de extractos bancarios (CSV o Excel) — funciones puras, sin DOM.
 //
-// 1. readTable(): texto o filas de Excel → tabla (array de filas).
-// 2. detectMapping(): busca la fila de cabecera y qué columna es cada cosa
-//    (fecha, concepto, importe o cargo/abono). Si no hay cabecera, lo deduce
-//    por el contenido. El saldo se ignora.
-// 3. extractRows(): aplica ese mapeo y devuelve movimientos limpios.
+// 1. csvToRows(): texto → tabla (array de filas). Los Excel se leen en app.js.
+// 2. detectSections(): busca las tablas de movimientos (una o varias) y qué
+//    columna es cada cosa (fecha, concepto, importe o cargo/abono). Si no hay
+//    cabecera, lo deduce por el contenido. El saldo se ignora.
+// 3. extractAll(): aplica esos mapeos y devuelve movimientos limpios, marcando
+//    los traspasos entre cuentas propias.
 
 const HEADER_PATTERNS = {
   date: /^(f\.?\s*)?(fecha|date|dia|día)\b|fecha.*(operaci|movim|transac|contable)|^f\.?\s*(oper|valor|contable)|started date|completed date|booking date/i,
   dateValue: /valor|value/i,
   description: /concepto|descripci|detalle|movimiento|description|comercio|beneficiario|payee|merchant|referencia|observaciones|asunto|operaci[oó]n$/i,
+  inOut: /entradas?\s*\/\s*salidas?|money in\s*\/\s*out|paid in\s*\/\s*out|ingresos?\s*\/\s*gastos?/i,
+  returns: /inter[eé]s|interest|dividend|rendimiento|rentabilidad|returns?\b/i,
   amount: /^(importe|amount|cantidad|euros|eur|monto|valor)\b|importe|amount/i,
   debit: /cargo|debe|d[eé]bito|salida|gasto|withdrawal|debit|money out|pagos?$/i,
   credit: /abono|haber|cr[eé]dito|entrada|ingreso|deposit|credit|money in|cobros?$/i,
   balance: /saldo|balance|disponible/i,
-  strongIgnore: /^(tipo|type|divisa|currency|moneda|estado|state|product|producto|fee|comisi|categor|subcategor|hora|time)/i,
+  category: /^(categor[ií]a|category)$/i,
+  strongIgnore: /^(tipo|type|divisa|currency|moneda|estado|state|product|producto|fee|comisi|categor|subcategor|hora|time|impuesto|tax|other tax|otros impuestos|tae|tin|apr|isin|pa[ií]s|country|edad|units|precio|ganancias)/i,
   ignore: /divisa|currency|moneda|categor|tipo|type|estado|state|product|producto|fee|comisi|tarjeta|card|oficina|n[uú]m|c[oó]digo|code|hora|time/i,
 };
+
+// Movimientos entre tus propias cuentas: no son gasto ni ingreso real.
+const TRANSFER_CATEGORY = /^(cambio|exchange|traspaso|transfer between)/i;
+const TRANSFER_DESCRIPTION = /^(recarga|top[- ]?up|conversi[oó]n a|exchanged? to|(a|desde|to|from) (eur|gbp|usd|chf)\b)|cartera flexible|cuenta remunerada|cuenta de inversi[oó]n|investment account|\bhucha\b|\bpocket\b|\bvault\b|traspaso (entre|a) (mis|tus) cuentas/i;
+// Secciones de inversión (compras/ventas de acciones o fondos): es dinero que ya
+// estaba invertido, no gasto ni ingreso. Los dividendos sí cuentan, aparte.
+const INVESTMENT_SECTION = /corretaje|brokerage|unidades que se han vendido|units sold|robo.?advisor|investment|inversi[oó]n/i;
+
+function plain(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/** ¿El concepto nombra a la persona titular? (p. ej. "To Cristina Rodríguez" con nombre "Cristina Rodriguez"). */
+function mentionsOwnName(description, ownNames) {
+  const d = plain(description);
+  return ownNames.some((name) => {
+    const words = plain(name).split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+    return words.length >= 2 && words.every((w) => new RegExp(`\\b${w}\\b`).test(d));
+  });
+}
 
 function normText(s) {
   return String(s ?? '').trim().replace(/\s+/g, ' ');
@@ -148,35 +172,41 @@ function parseAmount(v) {
 
 function headerRole(text) {
   const t = normText(text).toLowerCase();
-  if (!t || t.length > 40) return null;
+  if (!t || t.length > 50) return null;
   if (HEADER_PATTERNS.balance.test(t)) return 'balance';
   if (HEADER_PATTERNS.date.test(t)) return HEADER_PATTERNS.dateValue.test(t) ? 'dateValue' : 'date';
+  if (HEADER_PATTERNS.inOut.test(t)) return 'amount';
+  if (HEADER_PATTERNS.category.test(t)) return 'category';
+  if (HEADER_PATTERNS.strongIgnore.test(t)) return 'ignore';
+  if (HEADER_PATTERNS.returns.test(t)) return 'returns';
   if (HEADER_PATTERNS.debit.test(t)) return 'debit';
   if (HEADER_PATTERNS.credit.test(t)) return 'credit';
   if (HEADER_PATTERNS.amount.test(t)) return 'amount';
-  if (HEADER_PATTERNS.strongIgnore.test(t)) return 'ignore';
   if (HEADER_PATTERNS.description.test(t)) return 'description';
   if (HEADER_PATTERNS.ignore.test(t)) return 'ignore';
   return null;
 }
 
-function columnStats(rows, start, ncols) {
+const MONEY_ROLES = ['amount', 'debit', 'credit', 'returns'];
+
+function columnStats(rows, start, end, ncols) {
   const stats = [];
   for (let c = 0; c < ncols; c++) {
-    let dates = 0, nums = 0, neg = 0, texts = 0, filled = 0, textLen = 0;
+    let dates = 0, nums = 0, neg = 0, texts = 0, filled = 0, textLen = 0, euro = 0;
     const distinct = new Set();
     const values = [];
-    for (let r = start; r < rows.length; r++) {
+    for (let r = start; r < end; r++) {
       const v = rows[r][c];
       if (v === undefined || v === null || normText(v) === '') { values.push(null); continue; }
       filled++;
+      if (/€|eur/i.test(String(v))) euro++;
       if (parseDate(v)) dates++;
       const n = parseAmount(v);
       values.push(n);
       if (n !== null && !parseDate(v)) { nums++; if (n < 0) neg++; }
       if (typeof v === 'string' && /[a-zà-ÿ]{2,}/i.test(v)) { texts++; textLen += v.length; distinct.add(v); }
     }
-    stats.push({ dates, nums, neg, texts, filled, avgLen: texts ? textLen / texts : 0, distinct: distinct.size, values });
+    stats.push({ dates, nums, neg, texts, filled, euro, avgLen: texts ? textLen / texts : 0, distinct: distinct.size, values });
   }
   return stats;
 }
@@ -193,46 +223,69 @@ function looksLikeBalance(amounts, balances) {
   return tries >= 2 && hits / tries > 0.6;
 }
 
-/**
- * Devuelve { headerRow, headers, date, description: [..], amount, debit, credit, dateOrder }.
- * Los valores son índices de columna (o -1).
- */
-function detectMapping(rows) {
-  const ncols = Math.max(0, ...rows.slice(0, 200).map((r) => r.length));
-  // 1) Cabecera: la fila (de las 40 primeras) con más nombres de columna reconocidos.
-  let headerRow = -1, bestScore = 0, roles = [];
-  for (let r = 0; r < Math.min(rows.length, 40); r++) {
-    const rr = rows[r].map(headerRole);
-    const useful = rr.filter((x) => x && x !== 'ignore' && x !== 'dateValue');
-    const hasDate = rr.includes('date') || rr.includes('dateValue');
-    const hasMoney = rr.some((x) => x === 'amount' || x === 'debit' || x === 'credit');
-    const score = useful.length + (hasDate ? 2 : 0) + (hasMoney ? 2 : 0);
-    if (hasDate && hasMoney && score > bestScore) { bestScore = score; headerRow = r; roles = rr; }
+/** Filas que parecen cabeceras de una tabla de movimientos (fecha + algún importe). */
+function findHeaderRows(rows) {
+  const found = [];
+  for (let r = 0; r < rows.length; r++) {
+    const roles = rows[r].map(headerRole);
+    const hasDate = roles.includes('date') || roles.includes('dateValue');
+    const hasMoney = roles.some((x) => MONEY_ROLES.includes(x));
+    if (hasDate && hasMoney) found.push({ row: r, roles });
   }
-  const start = headerRow + 1;
-  const stats = columnStats(rows, start, ncols);
-  const m = { headerRow, headers: headerRow >= 0 ? rows[headerRow].map(normText) : [], date: -1, description: [], amount: -1, debit: -1, credit: -1, dateOrder: 'dmy' };
+  return found;
+}
+
+/** Título de la sección: la línea suelta más cercana encima de la cabecera (p. ej. "Cuenta personal (EUR)"). */
+function sectionTitle(rows, headerRow) {
+  for (let r = headerRow - 1; r >= Math.max(0, headerRow - 8); r--) {
+    const cells = rows[r].map(normText).filter(Boolean);
+    if (cells.length !== 1) continue;
+    const t = cells[0];
+    if (/^(-{3,}|extracto|transaction statement|estado de transacciones|statement)/i.test(t)) continue;
+    return t.replace(/\s*(estado de transacciones|transaction statements?|res[uú]menes)\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+  }
+  return '';
+}
+
+function buildMapping(rows, headerRow, roles, start, end) {
+  const ncols = Math.max(0, ...rows.slice(Math.max(0, headerRow), Math.min(end, start + 300)).map((r) => r.length));
+  const stats = columnStats(rows, start, end, ncols);
+  const m = {
+    headerRow, start, end, title: headerRow >= 0 ? sectionTitle(rows, headerRow) : '',
+    headers: headerRow >= 0 ? rows[headerRow].map(normText) : [],
+    date: -1, description: [], amount: -1, debit: -1, credit: -1, category: -1, kind: 'movements', dateOrder: 'dmy',
+  };
 
   if (headerRow >= 0) {
     m.date = roles.indexOf('date');
     if (m.date < 0) m.date = roles.indexOf('dateValue');
-    m.amount = roles.indexOf('amount');
     m.debit = roles.indexOf('debit');
     m.credit = roles.indexOf('credit');
-    if (m.debit >= 0 && m.credit < 0) { m.amount = m.amount >= 0 ? m.amount : -1; }
-    if (m.amount >= 0 && m.debit >= 0 && m.credit >= 0) m.amount = -1; // cargo + abono manda
+    m.category = roles.indexOf('category');
     m.description = roles.map((r, i) => (r === 'description' ? i : -1)).filter((i) => i >= 0);
+    // Importe: si hay varias columnas candidatas (p. ej. en libras y en euros, o
+    // bruto y neto), gana la neta y la que está en euros.
+    let cands = roles.map((r, i) => (r === 'amount' ? i : -1)).filter((i) => i >= 0);
+    if (!cands.length) {
+      cands = roles.map((r, i) => (r === 'returns' ? i : -1)).filter((i) => i >= 0);
+      if (cands.length) m.kind = 'returns';
+    }
+    const score = (i) => (/net|neto|neta/i.test(m.headers[i]) ? 2 : 0) + (/distribuid|retirad|paid/i.test(m.headers[i]) ? 1 : 0) + (stats[i] && stats[i].euro ? 1 : 0);
+    let best = -1, bestScore = -1;
+    for (const i of cands) if (score(i) >= bestScore) { best = i; bestScore = score(i); }
+    m.amount = best;
+    if (m.amount >= 0 && m.debit >= 0 && m.credit >= 0) m.amount = -1; // cargo + abono manda
+    if (m.amount >= 0) { m.debit = -1; m.credit = -1; }
   }
 
-  // 2) Lo que falte se deduce por el contenido.
-  const used = () => new Set([m.date, m.amount, m.debit, m.credit, ...m.description]);
+  // Lo que falte se deduce por el contenido.
+  const used = () => new Set([m.date, m.amount, m.debit, m.credit, m.category, ...m.description]);
   if (m.date < 0) {
     const cand = stats.map((s, i) => ({ i, s })).filter(({ s }) => s.filled && s.dates / s.filled > 0.7);
     if (cand.length) m.date = cand.sort((a, b) => b.s.dates - a.s.dates)[0].i;
   }
   if (m.amount < 0 && m.debit < 0 && m.credit < 0) {
     const numeric = stats.map((s, i) => ({ i, s })).filter(({ i, s }) => !used().has(i) && s.filled && s.nums / s.filled > 0.7 && roles[i] !== 'balance');
-    // Descarta columnas que son el saldo de otra.
     const notBalance = numeric.filter(({ i }) => !numeric.some(({ i: j }) => j !== i && looksLikeBalance(stats[j].values, stats[i].values)));
     const pick = (notBalance.length ? notBalance : numeric).sort((a, b) => (b.s.neg > 0) - (a.s.neg > 0) || a.i - b.i)[0];
     if (pick) m.amount = pick.i;
@@ -243,9 +296,9 @@ function detectMapping(rows) {
     if (best) m.description = [best.i];
   }
 
-  // 3) Orden de la fecha: en España es día/mes; si el segundo número pasa de 12, es mes/día.
+  // Orden de la fecha: en España es día/mes; si el segundo número pasa de 12, es mes/día.
   if (m.date >= 0) {
-    for (let r = start; r < rows.length; r++) {
+    for (let r = start; r < end; r++) {
       const mm = normText(rows[r][m.date]).match(/^(\d{1,2})[-/.](\d{1,2})[-/.]\d{2,4}/);
       if (mm && +mm[2] > 12) { m.dateOrder = 'mdy'; break; }
     }
@@ -254,14 +307,44 @@ function detectMapping(rows) {
 }
 
 /**
- * Aplica el mapeo. Devuelve { items: [{date, description, amount}], skipped }.
- * amount < 0 = gasto. `invert` da la vuelta al signo (p. ej. tarjetas de crédito
- * que ponen los gastos en positivo).
+ * Divide el archivo en tablas de movimientos. Un extracto normal tiene una;
+ * los consolidados (p. ej. Revolut) traen varias: cuentas en distintas
+ * divisas, intereses, dividendos… Cada sección termina en la siguiente
+ * cabecera, en una fila "Total" o en una línea "-----".
  */
-function extractRows(rows, m, { invert = false } = {}) {
+function detectSections(rows) {
+  const headers = findHeaderRows(rows);
+  if (!headers.length) return [buildMapping(rows, -1, [], 0, rows.length)];
+  return headers.map((h, k) => {
+    const limit = k + 1 < headers.length ? headers[k + 1].row : rows.length;
+    let end = limit;
+    for (let r = h.row + 1; r < limit; r++) {
+      if (/^(-{3,}|total\b)/i.test(normText(rows[r][0]))) { end = r; break; }
+    }
+    return buildMapping(rows, h.row, h.roles, h.row + 1, end);
+  });
+}
+
+/** Compatibilidad: la primera (o única) tabla del archivo. */
+function detectMapping(rows) {
+  return detectSections(rows)[0];
+}
+
+function decodeEntities(s) {
+  return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+
+/**
+ * Aplica el mapeo de una sección. Devuelve { items, skipped }. Cada item:
+ * { date, description, amount (<0 = gasto), transfer, kind }.
+ * `invert` da la vuelta al signo (tarjetas que ponen los gastos en positivo).
+ */
+function extractRows(rows, m, { invert = false, ownNames = [] } = {}) {
+  const investment = m.kind === 'movements' && INVESTMENT_SECTION.test(m.title || '');
   const items = [];
   let skipped = 0;
-  for (let r = m.headerRow + 1; r < rows.length; r++) {
+  const end = m.end ?? rows.length;
+  for (let r = m.start ?? m.headerRow + 1; r < end; r++) {
     const row = rows[r];
     const date = m.date >= 0 ? parseDate(row[m.date], m.dateOrder) : null;
     let amount = null;
@@ -272,15 +355,53 @@ function extractRows(rows, m, { invert = false } = {}) {
     } else if (m.amount >= 0) {
       amount = parseAmount(row[m.amount]);
     }
-    const description = m.description.map((i) => normText(row[i])).filter(Boolean)
-      .filter((v, i, arr) => arr.indexOf(v) === i).join(' · ');
+    const description = decodeEntities(m.description.map((i) => normText(row[i])).filter(Boolean)
+      .filter((v, i, arr) => arr.indexOf(v) === i).join(' · '));
     if (!date || amount === null || amount === 0) { if (row.some((c) => normText(c))) skipped++; continue; }
     if (/^(saldo|total|suma)/i.test(description)) { skipped++; continue; }
-    items.push({ date, description: description || 'Movimiento', amount: invert ? -amount : amount });
+    const sourceCategory = m.category >= 0 ? normText(row[m.category]) : '';
+    let transfer = '';
+    if (investment) transfer = 'inversión';
+    else if (m.kind === 'movements' && (TRANSFER_CATEGORY.test(sourceCategory) || TRANSFER_DESCRIPTION.test(description) || mentionsOwnName(description, ownNames))) {
+      transfer = /inversi|invest/i.test(description) ? 'inversión' : 'traspaso';
+    }
+    items.push({ date, description: description || 'Movimiento', amount: invert ? -amount : amount, transfer, kind: m.kind, section: m.title || '' });
   }
   return { items, skipped };
 }
 
+/**
+ * Todas las secciones juntas. Los intereses, rendimientos y dividendos se
+ * agrupan en un único ingreso por mes y sección (en vez de decenas de céntimos).
+ */
+function extractAll(rows, sections, opts = {}) {
+  const items = [];
+  let skipped = 0;
+  for (const m of sections) {
+    const res = extractRows(rows, m, opts);
+    skipped += res.skipped;
+    if (m.kind !== 'returns') { items.push(...res.items); continue; }
+    const head = m.headers[m.amount] || '';
+    const label = /divid/i.test(head) ? 'Dividendos' : /inter[eé]s|interest/i.test(head) ? 'Intereses' : 'Rendimientos';
+    const byMonth = new Map();
+    for (const it of res.items) {
+      const k = it.date.slice(0, 7);
+      const g = byMonth.get(k) || { date: it.date, amount: 0, n: 0 };
+      g.amount += it.amount;
+      g.n++;
+      if (it.date > g.date) g.date = it.date;
+      byMonth.set(k, g);
+    }
+    for (const g of byMonth.values()) {
+      const amount = Math.round(g.amount * 100) / 100;
+      if (!amount) continue;
+      items.push({ date: g.date, description: `${label}${m.title ? ' · ' + m.title : ''} (${g.n} ${g.n === 1 ? 'pago' : 'pagos'})`, amount, transfer: '', kind: 'returns', section: m.title || '' });
+    }
+  }
+  items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return { items, skipped };
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { decodeText, isSpreadsheet, csvToRows, detectDelimiter, parseDate, parseAmount, detectMapping, extractRows, headerRole };
+  module.exports = { mentionsOwnName, decodeText, isSpreadsheet, csvToRows, detectDelimiter, parseDate, parseAmount, detectMapping, detectSections, extractRows, extractAll, headerRole };
 }

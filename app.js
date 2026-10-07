@@ -397,7 +397,7 @@ txForm.querySelectorAll('input[name="type"]').forEach((r) => r.addEventListener(
 
 function autoClassify() {
   if (categoryTouched) return;
-  const guess = classify(txForm.elements.description.value, currentType());
+  const guess = classify(txForm.elements.description.value, currentType(), state.settings.rules);
   if (guess) {
     txForm.elements.category.value = guess;
     const c = CATEGORY_BY_ID[guess];
@@ -433,8 +433,12 @@ txForm.addEventListener('submit', (e) => {
   };
   if (!(tx.amount > 0) || !tx.date) return;
   if (editingTxId) {
+    const before = state.transactions.find((t) => t.id === editingTxId);
     state.transactions = state.transactions.map((t) => (t.id === editingTxId ? tx : t));
-    toast('Movimiento actualizado');
+    const learned = before && before.category !== tx.category ? learnCategory(tx, before.category) : 0;
+    toast(learned
+      ? `Actualizado. También he cambiado ${learned} ${learned === 1 ? 'movimiento igual' : 'movimientos iguales'} y lo recordaré.`
+      : 'Movimiento actualizado');
   } else {
     state.transactions.push(tx);
     toast(`${tx.type === 'income' ? 'Ingreso' : 'Gasto'} guardado en ${CATEGORY_BY_ID[tx.category].label}`);
@@ -445,6 +449,25 @@ txForm.addEventListener('submit', (e) => {
   txForm.elements.date.value = tx.date;
   renderMovimientos();
 });
+
+/**
+ * Al cambiar la categoría de un movimiento, la app lo recuerda para ese mismo
+ * concepto (próximas importaciones y altas) y corrige los iguales que tenían
+ * la categoría anterior. Devuelve cuántos otros movimientos ha cambiado.
+ */
+function learnCategory(tx, previousCategory) {
+  const key = ruleKey(tx.description);
+  if (!key) return 0;
+  state.settings.rules = { ...(state.settings.rules || {}), [key]: tx.category };
+  let changed = 0;
+  for (const t of state.transactions) {
+    if (t.id !== tx.id && t.type === tx.type && ruleKey(t.description) === key && t.category === previousCategory) {
+      t.category = tx.category;
+      changed++;
+    }
+  }
+  return changed;
+}
 
 $('#tx-cancel').addEventListener('click', resetTxForm);
 $('#list-month').addEventListener('change', renderMovimientos);
@@ -532,7 +555,8 @@ $('#copy-fixed').addEventListener('click', () => {
 // ---------- Importar extractos del banco (CSV o Excel) ----------
 
 const IMPORT_MAPS_KEY = 'mf-import-maps';
-let importJob = null; // { name, rows, mapping, signature }
+// { name, rows, sections, signature, toggles: { índice → incluir sí/no } }
+let importJob = null;
 
 $('#csv-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -542,11 +566,13 @@ $('#csv-input').addEventListener('change', async (e) => {
     const buffer = await file.arrayBuffer();
     const rows = isSpreadsheet(buffer) ? await spreadsheetRows(buffer) : csvToRows(decodeText(buffer));
     if (!rows.length) { toast('El archivo está vacío'); return; }
-    const mapping = detectMapping(rows);
-    const signature = mapping.headers.join('|');
+    const sections = detectSections(rows);
+    const signature = sections.length === 1 ? sections[0].headers.join('|') : '';
     const saved = signature && loadImportMaps()[signature];
-    importJob = { name: file.name, rows, signature, mapping: saved ? { ...mapping, ...saved } : mapping };
+    if (saved) Object.assign(sections[0], saved);
+    importJob = { name: file.name, rows, sections, signature, toggles: {} };
     $('#import-invert').checked = Boolean(saved && saved.invert);
+    $('#import-names').value = state.settings.ownNames || '';
     $('#import-adv').open = false;
     renderImportPreview();
     $('#import-card').classList.remove('hidden');
@@ -581,27 +607,50 @@ function loadImportMaps() {
   try { return JSON.parse(localStorage.getItem(IMPORT_MAPS_KEY)) || {}; } catch (e) { return {}; }
 }
 
+function ownNames() {
+  return String(state.settings.ownNames || '').split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+}
+
 function txKey(t) {
   return `${t.date}|${Math.abs(t.amount).toFixed(2)}|${normalize(t.description).trim()}`;
 }
 
-function importItems() {
-  const { items, skipped } = extractRows(importJob.rows, importJob.mapping, { invert: $('#import-invert').checked });
-  const existing = new Set(state.transactions.map(txKey));
-  const fresh = [];
-  let duplicates = 0;
-  for (const it of items) {
-    if (existing.has(txKey(it))) { duplicates++; continue; }
-    existing.add(txKey(it));
-    const type = it.amount < 0 ? 'expense' : 'income';
-    const category = classify(it.description, type) || (type === 'income' ? 'otros_ing' : 'otros');
-    fresh.push({ type, date: it.date, amount: Math.round(Math.abs(it.amount) * 100) / 100, description: it.description, category });
-  }
-  return { fresh, skipped, duplicates };
+function autoCategory(description, type) {
+  return classify(description, type, state.settings.rules) || (type === 'income' ? 'otros_ing' : 'otros');
 }
 
-function renderImportPreview() {
-  const { rows, mapping } = importJob;
+/** Movimientos del archivo listos para importar, con su casilla marcada o no. */
+function importItems() {
+  const { items, skipped } = extractAll(importJob.rows, importJob.sections, { invert: $('#import-invert').checked, ownNames: ownNames() });
+  // Duplicados: solo frente a lo que ya tienes (dos cafés iguales el mismo día son dos cafés).
+  const existing = new Map();
+  for (const t of state.transactions) existing.set(txKey(t), (existing.get(txKey(t)) || 0) + 1);
+  const list = [];
+  let duplicates = 0;
+  items.forEach((it) => {
+    const k = txKey(it);
+    if (existing.get(k)) { existing.set(k, existing.get(k) - 1); duplicates++; return; }
+    const type = it.amount < 0 ? 'expense' : 'income';
+    const category = it.kind === 'returns' ? 'rendimientos' : autoCategory(it.description, type);
+    const idx = list.length;
+    const include = idx in importJob.toggles ? importJob.toggles[idx] : !it.transfer;
+    list.push({ idx, include, transfer: it.transfer, section: it.section, type, date: it.date, amount: Math.round(Math.abs(it.amount) * 100) / 100, description: it.description, category });
+  });
+  return { list, skipped, duplicates };
+}
+
+function renderImportMapping() {
+  const single = importJob.sections.length === 1;
+  $('#import-adv').classList.toggle('hidden', !single);
+  const multi = $('#import-sections');
+  multi.classList.toggle('hidden', single);
+  if (!single) {
+    const names = [...new Set(importJob.sections.map((m) => m.title).filter(Boolean))];
+    multi.innerHTML = `Extracto con varias secciones: ${names.map(esc).join(', ')}. He tomado los importes en euros.`;
+    return;
+  }
+  const { rows } = importJob;
+  const mapping = importJob.sections[0];
   const ncols = Math.max(...rows.slice(0, 200).map((r) => r.length));
   const sample = rows[mapping.headerRow + 1] || [];
   const colName = (i) => {
@@ -620,49 +669,84 @@ function renderImportPreview() {
   map.querySelector('[data-map="debit"]').innerHTML = options(mapping.debit);
   map.querySelector('[data-map="credit"]').innerHTML = options(mapping.credit);
   map.querySelector('[data-map="dateOrder"]').value = mapping.dateOrder;
+}
+
+function renderImportPreview() {
+  renderImportMapping();
   $('#import-file').textContent = importJob.name;
-
-  const { fresh, skipped, duplicates } = importItems();
-  const exp = fresh.filter((t) => t.type === 'expense');
-  const inc = fresh.filter((t) => t.type === 'income');
+  const { list, skipped, duplicates } = importItems();
+  const chosen = list.filter((t) => t.include);
+  const exp = chosen.filter((t) => t.type === 'expense');
+  const inc = chosen.filter((t) => t.type === 'income');
+  const transfers = list.filter((t) => t.transfer);
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-  const parts = [`<strong>${plural(fresh.length, 'movimiento nuevo', 'movimientos nuevos')}</strong>: ${plural(exp.length, 'gasto', 'gastos')} (${money(exp.reduce((a, t) => a + t.amount, 0))}) y ${plural(inc.length, 'ingreso', 'ingresos')} (${money(inc.reduce((a, t) => a + t.amount, 0))}).`];
+  const parts = [`<strong>${plural(chosen.length, 'movimiento', 'movimientos')} para importar</strong>: ${plural(exp.length, 'gasto', 'gastos')} (${money(exp.reduce((a, t) => a + t.amount, 0))}) y ${plural(inc.length, 'ingreso', 'ingresos')} (${money(inc.reduce((a, t) => a + t.amount, 0))}).`];
+  if (transfers.length) parts.push(`${plural(transfers.length, 'movimiento es un traspaso', 'movimientos son traspasos')} entre tus cuentas o inversiones (cambio de divisa, ahorro, recargas…): no son gasto ni ingreso y van sin marcar.`);
   if (duplicates) parts.push(`${duplicates} ya los tenías y no se repetirán.`);
-  if (skipped) parts.push(`${skipped} filas sin fecha o importe se ignoran (cabeceras, totales…).`);
-  if (!fresh.length && !duplicates) parts.push('⚠️ No sale ningún movimiento: revisa qué columna es la fecha y cuál el importe.');
+  if (skipped) parts.push(`${skipped} filas sin fecha o importe se ignoran.`);
+  if (!list.length && !duplicates) {
+    parts.push('⚠️ No sale ningún movimiento: revisa qué columna es la fecha y cuál el importe.');
+    $('#import-adv').open = true;
+  }
   $('#import-summary').innerHTML = parts.join(' ');
-  if (!fresh.length && !duplicates) $('#import-adv').open = true;
-  $('#import-confirm').disabled = !fresh.length;
-  $('#import-confirm').textContent = fresh.length ? `Importar ${fresh.length}` : 'Importar';
+  $('#import-transfers-row').classList.toggle('hidden', !transfers.length);
+  $('#import-transfers').checked = transfers.length > 0 && transfers.every((t) => t.include);
+  $('#import-confirm').disabled = !chosen.length;
+  $('#import-confirm').textContent = chosen.length ? `Importar ${chosen.length}` : 'Importar';
 
-  const shown = fresh.slice(0, 12);
   $('#import-table').innerHTML = `
-    <thead><tr><th>Fecha</th><th>Concepto y categoría</th><th class="r">Importe</th></tr></thead>
-    <tbody>${shown.map((t) => {
+    <thead><tr><th></th><th>Fecha</th><th>Concepto y categoría</th><th class="r">Importe</th></tr></thead>
+    <tbody>${list.map((t) => {
       const c = CATEGORY_BY_ID[t.category];
       const color = t.type === 'income' ? 'var(--series-income)' : GROUPS[c.group].color;
-      return `<tr>
+      return `<tr class="${t.include ? '' : 'off'}">
+        <td><input type="checkbox" data-idx="${t.idx}" ${t.include ? 'checked' : ''} aria-label="Importar este movimiento"></td>
         <td class="num">${t.date.slice(8, 10)}/${t.date.slice(5, 7)}/${t.date.slice(2, 4)}</td>
-        <td class="desc"><div>${esc(t.description)}</div><span class="chip"><i class="dot" style="background:${color}"></i>${c.label}</span></td>
+        <td class="desc"><div>${esc(t.description)}</div>${t.transfer
+          ? `<span class="badge">↔ ${t.transfer}</span>`
+          : `<span class="chip"><i class="dot" style="background:${color}"></i>${c.label}</span>`}</td>
         <td class="num r ${t.type === 'income' ? 'pos' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount, { decimals: 2 })}</td>
       </tr>`;
-    }).join('')}
-    ${fresh.length > shown.length ? `<tr><td colspan="3" class="muted small">… y ${fresh.length - shown.length} más</td></tr>` : ''}
-    </tbody>`;
+    }).join('')}</tbody>`;
 }
+
+$('#import-table').addEventListener('change', (e) => {
+  const idx = e.target.dataset.idx;
+  if (idx === undefined || !importJob) return;
+  importJob.toggles[idx] = e.target.checked;
+  renderImportPreview();
+});
+
+$('#import-transfers').addEventListener('change', (e) => {
+  if (!importJob) return;
+  for (const t of importItems().list) if (t.transfer) importJob.toggles[t.idx] = e.target.checked;
+  renderImportPreview();
+});
+
+let namesTimer;
+$('#import-names').addEventListener('input', (e) => {
+  clearTimeout(namesTimer);
+  namesTimer = setTimeout(() => {
+    state.settings.ownNames = e.target.value.trim();
+    save();
+    if (importJob) renderImportPreview();
+  }, 400);
+});
 
 $('#import-mapping').addEventListener('change', (e) => {
   const key = e.target.dataset.map;
   if (!key || !importJob) return;
+  const mapping = importJob.sections[0];
   const v = key === 'dateOrder' ? e.target.value : Number(e.target.value);
-  if (key === 'description') importJob.mapping.description = v >= 0 ? [v] : [];
-  else importJob.mapping[key] = v;
+  if (key === 'description') mapping.description = v >= 0 ? [v] : [];
+  else mapping[key] = v;
   // Importe único o cargo/abono: elegir uno desactiva el otro.
-  if (key === 'amount' && v >= 0) { importJob.mapping.debit = -1; importJob.mapping.credit = -1; }
-  if ((key === 'debit' || key === 'credit') && v >= 0) importJob.mapping.amount = -1;
+  if (key === 'amount' && v >= 0) { mapping.debit = -1; mapping.credit = -1; }
+  if ((key === 'debit' || key === 'credit') && v >= 0) mapping.amount = -1;
+  importJob.toggles = {};
   renderImportPreview();
 });
-$('#import-invert').addEventListener('change', () => importJob && renderImportPreview());
+$('#import-invert').addEventListener('change', () => { if (importJob) { importJob.toggles = {}; renderImportPreview(); } });
 
 $('#import-cancel').addEventListener('click', () => {
   importJob = null;
@@ -671,24 +755,26 @@ $('#import-cancel').addEventListener('click', () => {
 
 $('#import-confirm').addEventListener('click', () => {
   if (!importJob) return;
-  const { fresh } = importItems();
-  if (!fresh.length) return;
-  state.transactions.push(...fresh.map((t) => ({ id: uid(), ...t })));
+  const chosen = importItems().list.filter((t) => t.include);
+  if (!chosen.length) return;
+  state.transactions.push(...chosen.map((t) => ({
+    id: uid(), type: t.type, date: t.date, amount: t.amount, description: t.description, category: t.category,
+  })));
   save();
   if (importJob.signature) {
     // Recuerda las columnas de este banco para la próxima vez.
     const maps = loadImportMaps();
-    const { date, description, amount, debit, credit, dateOrder } = importJob.mapping;
+    const { date, description, amount, debit, credit, dateOrder } = importJob.sections[0];
     maps[importJob.signature] = { date, description, amount, debit, credit, dateOrder, invert: $('#import-invert').checked };
     try { localStorage.setItem(IMPORT_MAPS_KEY, JSON.stringify(maps)); } catch (e) { /* sin almacenamiento */ }
   }
-  const latest = fresh.map((t) => t.date).sort().pop();
+  const latest = chosen.map((t) => t.date).sort().pop();
   $('#list-month').value = latest.slice(0, 7);
   importJob = null;
   $('#import-card').classList.add('hidden');
   renderMovimientos();
   $('#tx-list').scrollIntoView({ behavior: 'smooth' });
-  toast(`${fresh.length} movimientos importados y clasificados`);
+  toast(`${chosen.length} movimientos importados y clasificados`);
 });
 
 // ---------- AHORRO ----------
@@ -1020,7 +1106,7 @@ $('#load-demo').addEventListener('click', () => {
 function demoData() {
   const tx = [];
   const add = (month, day, type, amount, description) => {
-    const category = classify(description, type) || (type === 'income' ? 'otros_ing' : 'otros');
+    const category = autoCategory(description, type);
     tx.push({ id: uid(), type, date: `${month}-${String(day).padStart(2, '0')}`, amount, description, category });
   };
   for (let i = 5; i >= 0; i--) {

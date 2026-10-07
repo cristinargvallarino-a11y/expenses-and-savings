@@ -315,6 +315,10 @@ input[type="range"] { flex: 1; padding: 0; accent-color: var(--accent); box-shad
 .preview th { text-align: left; font-weight: 500; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
 .preview td { padding: 8px; border-bottom: 1px dashed var(--grid); vertical-align: top; }
 .preview .r { text-align: right; }
+.preview tr.off td { opacity: .45; }
+.preview td:first-child { width: 28px; padding-right: 0; }
+.table-wrap.scroll { max-height: 460px; overflow-y: auto; border-top: 1px solid var(--grid); }
+.preview thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
 .preview .desc { max-width: 0; width: 100%; }
 .preview .desc div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #import-adv { margin-top: 12px; }

@@ -152,6 +152,11 @@
           <span class="muted small" id="import-file"></span>
         </div>
         <div class="note" id="import-summary"></div>
+        <p class="muted small hidden" id="import-sections"></p>
+        <label class="field top-gap">Tus nombres tal como salen en el banco (opcional, separados por comas)
+          <input id="import-names" placeholder="Ej: Ana García, Ana García López">
+        </label>
+        <p class="muted small">Sirve para reconocer las transferencias a tus otras cuentas y no contarlas como gasto.</p>
         <details id="import-adv">
           <summary>¿Algo no cuadra? Cambiar columnas</summary>
           <p class="muted small">Elige de qué columna sale cada dato; la vista previa se actualiza al momento.</p>
@@ -167,7 +172,8 @@
         </div>
         </details>
         <label class="row gap small" style="margin-top:12px"><input type="checkbox" id="import-invert"> Mis gastos aparecen en positivo (p. ej. extracto de tarjeta de crédito)</label>
-        <div class="table-wrap"><table class="preview" id="import-table"></table></div>
+        <label class="row gap small hidden" id="import-transfers-row" style="margin-top:8px"><input type="checkbox" id="import-transfers"> Importar también los traspasos entre mis cuentas</label>
+        <div class="table-wrap scroll"><table class="preview" id="import-table"></table></div>
         <div class="form-actions top-gap">
           <button class="btn primary" id="import-confirm">Importar</button>
           <button class="btn ghost" id="import-cancel">Cancelar</button>
