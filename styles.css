@@ -270,12 +270,13 @@ main { max-width: 1100px; margin: 0 auto; padding: 18px 16px 32px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 14px 0; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; font-weight: 500; color: var(--text-2); min-width: 0; }
 .field.wide { grid-column: 1 / -1; }
-input, select {
+input, select, textarea {
   font: inherit; font-size: 16px; color: var(--text); background: var(--page);
   border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; min-width: 0; max-width: 100%;
   transition: border-color .15s, box-shadow .15s;
 }
-input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { resize: vertical; line-height: 1.4; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 input[type="range"] { flex: 1; padding: 0; accent-color: var(--accent); box-shadow: none; border: 0; background: transparent; }
 .form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn {

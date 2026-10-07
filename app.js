@@ -1071,10 +1071,9 @@ function renderCategoryList() {
   const pill = (c) => {
     const n = usageCount(c.id);
     const count = n ? ` <span class="count">${n}</span>` : '';
-    if (!c.custom) return `<span class="cat-pill">${esc(c.label)}${count}</span>`;
-    return `<span class="cat-pill custom">${esc(c.label)}${count}
+    return `<span class="cat-pill ${c.custom || c.edited ? 'custom' : ''}">${esc(c.label)}${count}
       <button type="button" data-cat-edit="${c.id}" aria-label="Editar ${esc(c.label)}">✏️</button>
-      <button type="button" data-cat-del="${c.id}" aria-label="Borrar ${esc(c.label)}">🗑️</button></span>`;
+      ${c.custom ? `<button type="button" data-cat-del="${c.id}" aria-label="Borrar ${esc(c.label)}">🗑️</button>` : ''}</span>`;
   };
   const groups = Object.entries(GROUPS).map(([gid, g]) => `
     <div class="cat-group">
@@ -1095,12 +1094,14 @@ function openCategoryDialog({ type = 'expense', editing = null, onSave = null } 
   catForm.querySelector(`input[name="type"][value="${kind}"]`).checked = true;
   // El tipo no se cambia al editar: los movimientos ya son gastos o ingresos.
   catForm.querySelectorAll('input[name="type"]').forEach((r) => { r.disabled = Boolean(editing); });
+  $('#cat-type').classList.toggle('hidden', Boolean(editing));
   catForm.elements.group.innerHTML = Object.entries(GROUPS)
     .map(([gid, g]) => `<option value="${gid}">${g.label}</option>`).join('');
   catForm.elements.group.value = editing ? editing.group : 'otros';
   catForm.elements.label.value = editing ? editing.label : '';
-  catForm.elements.keywords.value = editing ? (editing.keywords || []).join(', ') : '';
+  catForm.elements.keywords.value = editing ? (editing.keywords || []).map((k) => k.trim()).join(', ') : '';
   $('#cat-title').textContent = editing ? 'Editar categoría' : 'Nueva categoría';
+  $('#cat-reset').classList.toggle('hidden', !(editing && editing.edited));
   syncCategoryTypeField();
   if (typeof catDialog.showModal === 'function') catDialog.showModal();
   else catDialog.setAttribute('open', '');
@@ -1121,6 +1122,59 @@ catForm.querySelectorAll('input[name="type"]').forEach((r) => r.addEventListener
 $('#cat-cancel').addEventListener('click', closeCategoryDialog);
 $('#new-cat').addEventListener('click', () => openCategoryDialog());
 
+/** Lee las palabras clave del formulario conservando el formato de las de serie (p. ej. "bar " = palabra completa). */
+function parseKeywords(text, original = []) {
+  const byTrim = new Map(original.map((k) => [k.trim().toLowerCase(), k]));
+  const words = text.split(/[,\n]/).map((k) => k.trim().toLowerCase()).filter(Boolean);
+  // Palabras muy cortas solo cuentan como palabra completa ("bus" no debe casar con "abuso").
+  return [...new Set(words)].map((k) => byTrim.get(k) || (k.length <= 3 ? k + ' ' : k));
+}
+
+/**
+ * Cada palabra clave pertenece a una sola categoría: si otra del mismo tipo la
+ * tenía, se la quita. Devuelve los nombres de las categorías afectadas.
+ */
+function claimKeywords(catId, type, keywords) {
+  const mine = new Set(keywords.map((k) => k.trim()));
+  const affected = [];
+  const pool = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  for (const c of pool) {
+    if (c.id === catId) continue;
+    const kept = c.keywords.filter((k) => !mine.has(k.trim()));
+    if (kept.length === c.keywords.length) continue;
+    affected.push(c.label);
+    if (c.custom) {
+      state.settings.customCategories = state.settings.customCategories.map((x) => (x.id === c.id ? { ...x, keywords: kept } : x));
+    } else {
+      const overrides = { ...(state.settings.categoryOverrides || {}) };
+      overrides[c.id] = { ...(overrides[c.id] || {}), keywords: kept };
+      state.settings.categoryOverrides = overrides;
+    }
+  }
+  return affected;
+}
+
+/**
+ * Aplica un cambio de categorías y ofrece reclasificar los movimientos que
+ * estaban clasificados automáticamente y ahora encajan en otra. Los que
+ * cambiaste a mano no se tocan.
+ */
+function changeCategories(mutate) {
+  const before = new Map(state.transactions.map((t) => [t.id, autoCategory(t.description, t.type)]));
+  const result = mutate();
+  refreshCategories();
+  const moves = state.transactions.filter((t) => t.category === before.get(t.id) && autoCategory(t.description, t.type) !== t.category);
+  if (moves.length) {
+    const names = [...new Set(moves.map((t) => t.description))];
+    const sample = names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '');
+    const msg = `Con este cambio, ${moves.length === 1 ? '1 movimiento encaja' : moves.length + ' movimientos encajan'} en otra categoría (${sample}). ¿Los reclasifico?`;
+    if (confirm(msg)) for (const t of moves) t.category = autoCategory(t.description, t.type);
+  }
+  save();
+  renderAll();
+  return result;
+}
+
 catForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const f = catForm.elements;
@@ -1131,29 +1185,45 @@ catForm.addEventListener('submit', (e) => {
   const clash = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]
     .find((c) => c.label.toLowerCase() === label.toLowerCase() && (!editing || c.id !== editing.id));
   if (clash) { toast(`Ya existe una categoría "${clash.label}"`); return; }
-  const cat = {
-    id: editing ? editing.id : 'c_' + uid(),
-    label,
-    type,
-    group: type === 'income' ? undefined : f.group.value,
-    keywords: f.keywords.value.split(',').map((k) => k.trim()).filter(Boolean),
-  };
-  const list = (state.settings.customCategories || []).filter((c) => c.id !== cat.id);
-  state.settings.customCategories = [...list, cat];
-  refreshCategories();
+  const original = editing && !editing.custom ? builtinCategory(editing.id) : null;
+  const keywords = parseKeywords(f.keywords.value, original ? original.keywords : (editing ? editing.keywords : []));
+  const group = type === 'income' ? undefined : f.group.value;
+  const id = editing ? editing.id : 'c_' + uid();
   closeCategoryDialog();
 
-  // ¿Hay movimientos en "Otros" que encajan con las palabras clave?
-  const otherId = type === 'income' ? 'otros_ing' : 'otros';
-  const matches = state.transactions.filter((t) => t.type === type && t.category === otherId
-    && classify(t.description, type, state.settings.rules) === cat.id);
-  if (matches.length && confirm(`He encontrado ${matches.length === 1 ? '1 movimiento' : matches.length + ' movimientos'} en "Otros" que ${matches.length === 1 ? 'encaja' : 'encajan'} con "${label}". ¿Los muevo a esta categoría?`)) {
-    for (const t of matches) t.category = cat.id;
-  }
-  save();
-  renderAll();
-  toast(editing ? 'Categoría actualizada' : `Categoría "${label}" creada`);
-  if (onSave) onSave(cat);
+  const affected = changeCategories(() => {
+    if (original) {
+      // Categoría de serie: se guarda solo lo que cambia respecto al original.
+      const overrides = { ...(state.settings.categoryOverrides || {}) };
+      const o = {};
+      if (label !== original.label) o.label = label;
+      if (group && group !== original.group) o.group = group;
+      if (keywords.join('|') !== original.keywords.join('|')) o.keywords = keywords;
+      if (Object.keys(o).length) overrides[id] = o; else delete overrides[id];
+      state.settings.categoryOverrides = overrides;
+    } else {
+      const list = (state.settings.customCategories || []).filter((c) => c.id !== id);
+      state.settings.customCategories = [...list, { id, label, type, group, keywords }];
+    }
+    refreshCategories();
+    return claimKeywords(id, type, keywords);
+  });
+
+  const moved = affected.length ? `; esas palabras ya no están en ${affected.join(', ')}` : '';
+  toast(editing ? `Categoría actualizada${moved}` : `Categoría "${label}" creada${moved}`);
+  if (onSave) onSave(CATEGORY_BY_ID[id]);
+});
+
+$('#cat-reset').addEventListener('click', () => {
+  const { editing } = catDialogCtx || {};
+  if (!editing || editing.custom) return;
+  closeCategoryDialog();
+  changeCategories(() => {
+    const overrides = { ...(state.settings.categoryOverrides || {}) };
+    delete overrides[editing.id];
+    state.settings.categoryOverrides = overrides;
+  });
+  toast(`"${CATEGORY_BY_ID[editing.id].label}" vuelve a ser como al principio`);
 });
 
 $('#cat-list').addEventListener('click', (e) => {
@@ -1161,8 +1231,8 @@ $('#cat-list').addEventListener('click', (e) => {
   const delId = e.target.closest('[data-cat-del]')?.dataset.catDel;
   const custom = state.settings.customCategories || [];
   if (editId) {
-    const cat = custom.find((c) => c.id === editId);
-    if (cat) openCategoryDialog({ editing: cat });
+    const cat = CATEGORY_BY_ID[editId];
+    if (cat) openCategoryDialog({ editing: { ...cat, type: INCOME_CATEGORIES.includes(cat) ? 'income' : 'expense' } });
     return;
   }
   if (!delId) return;
@@ -1474,7 +1544,7 @@ window.addEventListener('online', () => { if (cloudOn() && isConnected()) syncNo
 // ---------- Arranque ----------
 
 function refreshCategories() {
-  setCustomCategories(state.settings.customCategories || []);
+  setCustomCategories(state.settings.customCategories || [], state.settings.categoryOverrides || {});
 }
 
 function renderAll() {

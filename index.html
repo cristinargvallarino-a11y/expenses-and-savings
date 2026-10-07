@@ -281,7 +281,7 @@
           <h2>Categorías</h2>
           <button class="btn primary small" id="new-cat" type="button">+ Nueva categoría</button>
         </div>
-        <p class="muted small">Crea las tuyas y ponles palabras clave para que la app clasifique sola. Las de serie no se pueden borrar.</p>
+        <p class="muted small">Toca ✏️ para cambiar el nombre, el grupo o las palabras clave de cualquier categoría, o crea las tuyas. Las de serie no se pueden borrar.</p>
         <div id="cat-list"></div>
       </article>
       <article class="card hidden" id="account-card">
@@ -319,13 +319,14 @@
           <select name="group"></select>
         </label>
         <label class="field wide">Palabras clave (opcional)
-          <input name="keywords" placeholder="Ej: veterinario, kiwoko, tiendanimal">
+          <textarea name="keywords" rows="3" placeholder="Ej: veterinario, kiwoko, tiendanimal"></textarea>
         </label>
       </div>
       <p class="muted small">Separadas por comas. Si el concepto de un movimiento contiene alguna, irá a esta categoría.</p>
       <div class="form-actions">
         <button class="btn primary" type="submit">Guardar</button>
         <button class="btn ghost" type="button" id="cat-cancel">Cancelar</button>
+        <button class="btn ghost hidden" type="button" id="cat-reset">Restaurar original</button>
       </div>
     </form>
   </dialog>

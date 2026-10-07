@@ -63,24 +63,44 @@ const CATEGORY_BY_ID = Object.fromEntries(
   [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].map((c) => [c.id, c])
 );
 
-const BUILTIN_EXPENSE = EXPENSE_CATEGORIES.slice();
-const BUILTIN_INCOME = INCOME_CATEGORIES.slice();
+const BUILTIN_EXPENSE = EXPENSE_CATEGORIES.map((c) => ({ ...c, keywords: [...c.keywords] }));
+const BUILTIN_INCOME = INCOME_CATEGORIES.map((c) => ({ ...c, keywords: [...c.keywords] }));
+
+/** La versión original (de serie) de una categoría, o undefined si es propia. */
+function builtinCategory(id) {
+  return [...BUILTIN_EXPENSE, ...BUILTIN_INCOME].find((c) => c.id === id);
+}
 
 /**
- * Añade las categorías creadas por la persona (guardadas en sus ajustes) a las
- * de serie. Cada una: { id, label, type: 'expense' | 'income', group, keywords }.
+ * Aplica la personalización guardada en los ajustes:
+ * - `list`: categorías creadas por la persona { id, label, type, group, keywords }.
+ * - `overrides`: cambios a las de serie { [id]: { label, group, keywords } }.
  * Se puede llamar las veces que haga falta: siempre parte de las de serie.
  */
-function setCustomCategories(list = []) {
+function setCustomCategories(list = [], overrides = {}) {
+  const tweak = (c) => {
+    const o = overrides && overrides[c.id];
+    if (!o) return { ...c, keywords: [...c.keywords] };
+    const keywords = Array.isArray(o.keywords) ? [...o.keywords] : [...c.keywords];
+    return {
+      ...c,
+      label: o.label || c.label,
+      group: c.group && o.group && GROUPS[o.group] ? o.group : c.group,
+      keywords,
+      // Las palabras que añadió la persona mandan sobre las de serie.
+      userKeywords: new Set(keywords.filter((k) => !c.keywords.includes(k))),
+      edited: true,
+    };
+  };
   const custom = (list || []).filter((c) => c && c.id && c.label);
   const expense = custom.filter((c) => c.type !== 'income' && GROUPS[c.group])
     .map((c) => ({ ...c, keywords: c.keywords || [], custom: true }));
   const income = custom.filter((c) => c.type === 'income')
     .map((c) => ({ ...c, keywords: c.keywords || [], custom: true }));
   EXPENSE_CATEGORIES.length = 0;
-  EXPENSE_CATEGORIES.push(...BUILTIN_EXPENSE, ...expense);
+  EXPENSE_CATEGORIES.push(...BUILTIN_EXPENSE.map(tweak), ...expense);
   INCOME_CATEGORIES.length = 0;
-  INCOME_CATEGORIES.push(...BUILTIN_INCOME, ...income);
+  INCOME_CATEGORIES.push(...BUILTIN_INCOME.map(tweak), ...income);
   for (const k of Object.keys(CATEGORY_BY_ID)) delete CATEGORY_BY_ID[k];
   for (const c of [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]) CATEGORY_BY_ID[c.id] = c;
 }
@@ -115,7 +135,7 @@ function classify(description, type, rules) {
       const k = normalize(kw).trim();
       const needle = kw.endsWith(' ') ? ' ' + k + ' ' : k;
       // Las palabras de tus categorías mandan sobre las de serie.
-      const score = k.length + (cat.custom ? 1000 : 0);
+      const score = k.length + (cat.custom || (cat.userKeywords && cat.userKeywords.has(kw)) ? 1000 : 0);
       if (text.includes(needle) && score > bestLen) {
         best = cat.id;
         bestLen = score;
@@ -126,5 +146,5 @@ function classify(description, type, rules) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { GROUPS, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CATEGORY_BY_ID, classify, ruleKey, normalize, setCustomCategories };
+  module.exports = { GROUPS, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CATEGORY_BY_ID, classify, ruleKey, normalize, setCustomCategories, builtinCategory };
 }
