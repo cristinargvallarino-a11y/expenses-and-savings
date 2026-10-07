@@ -183,6 +183,7 @@ $('#next-month').addEventListener('click', () => { viewMonth = addMonths(viewMon
 
 // ---------- RESUMEN ----------
 
+// Una frase por mes: cambia al moverte entre meses y no se repite en años seguidos.
 const QUOTES = [
   'Un euro ahorrado es un euro ganado.',
   'Cuida los céntimos, que los euros se cuidan solos.',
@@ -191,14 +192,35 @@ const QUOTES = [
   'Págate a ti primero.',
   'El mejor momento para empezar a ahorrar fue ayer; el segundo mejor, hoy.',
   'Los pequeños gastos son como pequeñas goteras: hunden grandes barcos.',
+  'No es cuánto ganas, sino cuánto guardas.',
+  'Quien guarda, halla.',
+  'El dinero es un buen sirviente y un mal amo.',
+  'Compra lo que necesitas, no lo que puedes.',
+  'Un presupuesto es decirle a tu dinero adónde ir, en vez de preguntarte adónde fue.',
+  'El interés compuesto es la octava maravilla del mundo.',
+  'Antes de comprar, espera 24 horas: si aún lo quieres, adelante.',
+  'La riqueza es lo que no ves: el coche que no compraste.',
+  'Gota a gota se llena la bota.',
+  'Invertir en ti siempre da los mejores intereses.',
+  'Vive por debajo de tus posibilidades y nunca te faltará.',
+  'Más vale pájaro en mano que ciento volando.',
+  'Lo barato sale caro… y los caprichos, más.',
+  'Un objetivo sin plan es solo un deseo.',
+  'Ahorrar no es privarse: es elegir.',
+  'Los grandes sueños se pagan a plazos pequeños.',
+  'El que no gasta lo que no tiene, siempre tiene.',
 ];
+
+function quoteForMonth(month) {
+  const [y, m] = month.split('-').map(Number);
+  return QUOTES[(y * 12 + m - 1) % QUOTES.length];
+}
 
 function renderHello() {
   const h = new Date().getHours();
   const greeting = h < 6 ? 'Buenas noches' : h < 13 ? 'Buenos días' : h < 21 ? 'Buenas tardes' : 'Buenas noches';
   $('#hello').textContent = `${greeting} ✨`;
-  const day = Math.floor(Date.now() / 86400000);
-  $('#quote').textContent = `“${QUOTES[day % QUOTES.length]}”`;
+  $('#quote').textContent = `“${quoteForMonth(viewMonth)}”`;
 }
 
 function renderResumen() {
@@ -328,16 +350,22 @@ function renderTrend() {
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(addMonths(viewMonth, -i));
   const data = months.map((m) => monthSummary(state.transactions, m, CATEGORY_BY_ID));
-  const el = $('#trend-chart');
+  drawIncomeExpenseBars($('#trend-chart'), data, viewMonth, 'Ingresos y gastos de los últimos 6 meses');
+}
+
+/** Barras agrupadas ingresos/gastos por mes, con tooltip. */
+function drawIncomeExpenseBars(el, data, highlight, ariaLabel) {
   const W = Math.max(300, el.clientWidth || 640), H = 240, padL = 52, padR = 8, padT = 10, padB = 26;
   const max = niceMax(Math.max(...data.map((d) => Math.max(d.income, d.expense)), 1));
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const slot = plotW / months.length;
-  const barW = Math.min(26, slot / 3);
+  const slot = plotW / data.length;
+  const barW = Math.max(3, Math.min(26, slot / 3));
   const y = (v) => padT + plotH - (v / max) * plotH;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+  // Con 12 meses en el móvil no caben "ene, feb…": se usa la inicial.
+  const label = (m) => (slot < 36 ? monthName(m, { month: 'narrow' }) : monthName(m, { month: 'short' }));
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ingresos y gastos de los últimos 6 meses">`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${ariaLabel}">`;
   for (const t of ticks) {
     svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}" stroke="var(${t === 0 ? '--axis' : '--grid'})" stroke-width="1"/>`;
     svg += `<text x="${padL - 6}" y="${y(t) + 4}" text-anchor="end">${compact(t)}</text>`;
@@ -346,7 +374,7 @@ function renderTrend() {
     const cx = padL + slot * i + slot / 2;
     svg += barPath(cx - barW - 1, y(d.income), barW, padT + plotH - y(d.income), 'var(--series-income)');
     svg += barPath(cx + 1, y(d.expense), barW, padT + plotH - y(d.expense), 'var(--series-expense)');
-    svg += `<text x="${cx}" y="${H - 8}" text-anchor="middle" style="${d.month === viewMonth ? 'fill:var(--text);font-weight:600' : ''}">${monthName(d.month, { month: 'short' })}</text>`;
+    svg += `<text x="${cx}" y="${H - 8}" text-anchor="middle" style="${d.month === highlight ? 'fill:var(--text);font-weight:600' : ''}">${label(d.month)}</text>`;
     svg += `<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}" width="${slot}" height="${plotH}" fill="transparent"/>`;
   });
   svg += `</svg>`;
@@ -378,6 +406,174 @@ function niceMax(v) {
 
 function compact(v) {
   return new Intl.NumberFormat('es-ES', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
+}
+
+// ---------- AÑO ----------
+
+let viewYear = Number(localMonth().slice(0, 4));
+
+$('#prev-year').addEventListener('click', () => { viewYear--; renderAnual(); });
+$('#next-year').addEventListener('click', () => { viewYear++; renderAnual(); });
+
+function yearMonths(year) {
+  return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
+}
+
+function renderAnual() {
+  const year = viewYear;
+  const current = localMonth();
+  $('#year-label').textContent = String(year);
+  const months = yearMonths(year);
+  const data = months.map((m) => monthSummary(state.transactions, m, CATEGORY_BY_ID));
+  // Meses con movimientos (para medias) y meses ya transcurridos (para el acumulado).
+  const active = data.filter((d) => d.income || d.expense);
+  const elapsed = data.filter((d) => d.month <= current);
+  const income = data.reduce((a, d) => a + d.income, 0);
+  const expense = data.reduce((a, d) => a + d.expense, 0);
+  const net = income - expense;
+  const n = Math.max(1, active.length);
+
+  const first = active[0], last = active[active.length - 1];
+  $('#year-sub').textContent = active.length
+    ? `De ${monthName(first.month, { month: 'long' }).toLowerCase()} a ${monthName(last.month, { month: 'long' }).toLowerCase()}: ${active.length} ${active.length === 1 ? 'mes' : 'meses'} con movimientos.`
+    : 'Todavía no hay movimientos este año.';
+
+  // Comparación con el mismo periodo del año anterior
+  const prevData = yearMonths(year - 1).map((m) => monthSummary(state.transactions, m, CATEGORY_BY_ID));
+  const samePeriod = (arr) => arr.filter((d, i) => data[i].income || data[i].expense);
+  const prevExpense = samePeriod(prevData).reduce((a, d) => a + d.expense, 0);
+  const prevIncome = samePeriod(prevData).reduce((a, d) => a + d.income, 0);
+  const vs = (now, before, invert) => {
+    if (!before) return '';
+    const d = (now - before) / before;
+    const good = invert ? d < 0 : d > 0;
+    return `<span class="${good ? 'pos' : 'neg'}">${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(d * 100))}%</span> vs. ${year - 1}`;
+  };
+  $('#year-kpis').innerHTML = `
+    <div class="kpi"><div class="label">Ingresos</div><div class="value">${money(income)}</div><div class="sub">${vs(income, prevIncome, false) || `${money(income / n)} de media al mes`}</div></div>
+    <div class="kpi"><div class="label">Gastos</div><div class="value">${money(expense)}</div><div class="sub">${vs(expense, prevExpense, true) || `${money(expense / n)} de media al mes`}</div></div>
+    <div class="kpi"><div class="label">Ahorro del año</div><div class="value ${net < 0 ? 'neg' : ''}">${money(net)}</div><div class="sub">${money(net / n)} de media al mes</div></div>
+    <div class="kpi"><div class="label">Tasa de ahorro</div><div class="value">${pct(income ? net / income : null)}</div><div class="sub">${income ? (net / income >= 0.2 ? '¡Por encima del 20%!' : 'Objetivo orientativo: 20%') : 'Añade tus ingresos'}</div></div>`;
+
+  // Gasto por grupo
+  const byGroup = {}, byCategory = {};
+  for (const d of data) {
+    for (const [g, v] of Object.entries(d.byGroup)) byGroup[g] = (byGroup[g] || 0) + v;
+    for (const [c, v] of Object.entries(d.byCategory)) byCategory[c] = (byCategory[c] || 0) + v;
+  }
+  const groups = Object.entries(GROUPS).map(([id, g]) => ({ id, ...g, amount: byGroup[id] || 0 }))
+    .filter((g) => g.amount > 0).sort((a, b) => b.amount - a.amount);
+  const gmax = Math.max(...groups.map((g) => g.amount), 1);
+  $('#year-groups').innerHTML = groups.length ? groups.map((g) => `
+    <div class="hbar">
+      <div class="name"><i class="dot" style="background:${g.color}"></i><span>${g.label}</span></div>
+      <div class="track"><div class="fill" style="width:${(g.amount / gmax) * 100}%;background:${g.color}"></div></div>
+      <div class="val num">${money(g.amount)}<small>${money(g.amount / n)}/mes</small></div>
+    </div>`).join('') : '<div class="empty">Sin gastos este año.</div>';
+
+  // Top categorías
+  const top = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const tmax = top.length ? top[0][1] : 1;
+  $('#year-top').innerHTML = top.length ? top.map(([id, amt]) => {
+    const c = CATEGORY_BY_ID[id] || CATEGORY_BY_ID.otros;
+    const g = GROUPS[c.group];
+    return `
+      <div class="hbar">
+        <div class="name"><i class="dot" style="background:${g.color}"></i><span>${esc(c.label)}</span></div>
+        <div class="track"><div class="fill" style="width:${(amt / tmax) * 100}%;background:${g.color}"></div></div>
+        <div class="val num">${money(amt)}<small>${pct(amt / expense)}</small></div>
+      </div>`;
+  }).join('') : '<div class="empty">Nada por aquí todavía.</div>';
+
+  // Lo más destacado
+  const hl = [];
+  if (active.length) {
+    const bestSave = active.reduce((a, d) => (d.net > a.net ? d : a));
+    const mostSpent = active.reduce((a, d) => (d.expense > a.expense ? d : a));
+    const leastSpent = active.reduce((a, d) => (d.expense < a.expense ? d : a));
+    hl.push(['💰', 'Mes en que más ahorraste', `${monthName(bestSave.month, { month: 'long' })}: ${money(bestSave.net)}`]);
+    hl.push(['💸', 'Mes con más gasto', `${monthName(mostSpent.month, { month: 'long' })}: ${money(mostSpent.expense)}`]);
+    if (active.length > 1) hl.push(['🌱', 'Mes con menos gasto', `${monthName(leastSpent.month, { month: 'long' })}: ${money(leastSpent.expense)}`]);
+    if (top.length) {
+      const [cid, amt] = top[0];
+      hl.push(['🧾', 'Donde más gastas', `${(CATEGORY_BY_ID[cid] || CATEGORY_BY_ID.otros).label}: ${money(amt)} (${pct(amt / expense)} de tus gastos)`]);
+    }
+    const travel = byGroup.viajes || 0;
+    if (travel) {
+      const fl = byCategory.vuelos || 0, ho = byCategory.hoteles || 0;
+      hl.push(['✈️', 'Viajes en el año', `${money(travel)} · vuelos ${money(fl)}, alojamiento ${money(ho)}`]);
+    }
+    if (prevExpense) {
+      const d = (expense - prevExpense) / prevExpense;
+      hl.push([d <= 0 ? '👏' : '⚠️', `Frente al mismo periodo de ${year - 1}`, `Has gastado un ${Math.abs(Math.round(d * 100))}% ${d <= 0 ? 'menos' : 'más'} (${money(Math.abs(expense - prevExpense))})`]);
+    }
+  }
+  $('#year-highlights').innerHTML = hl.length
+    ? hl.map(([ico, t, v]) => `<div class="highlight"><div class="ico">${ico}</div><div><div class="t">${t}</div><div class="v">${esc(v)}</div></div></div>`).join('')
+    : '<div class="empty">Cuando tengas movimientos verás aquí tus mejores y peores meses.</div>';
+
+  drawIncomeExpenseBars($('#year-chart'), data, current, `Ingresos y gastos de ${year}`);
+  drawCumulative($('#year-cum'), first ? elapsed.filter((d) => d.month >= first.month) : []);
+
+  // Tabla
+  const rows = data.map((d) => {
+    const emptyMonth = !d.income && !d.expense;
+    return `<tr class="${emptyMonth ? 'empty-month' : ''}">
+      <td>${monthName(d.month, { month: 'long' })}</td>
+      <td class="num">${emptyMonth ? '—' : money(d.income)}</td>
+      <td class="num">${emptyMonth ? '—' : money(d.expense)}</td>
+      <td class="num ${d.net < 0 ? 'neg' : ''}">${emptyMonth ? '—' : money(d.net)}</td>
+      <td class="num rate">${emptyMonth ? '—' : pct(d.rate)}</td>
+    </tr>`;
+  }).join('');
+  $('#year-table').innerHTML = `
+    <thead><tr><th>Mes</th><th class="r">Ingresos</th><th class="r">Gastos</th><th class="r">Ahorro</th><th class="r rate">Tasa</th></tr></thead>
+    <tbody>${rows}
+      <tr class="total"><td>Total</td><td class="num">${money(income)}</td><td class="num">${money(expense)}</td><td class="num ${net < 0 ? 'neg' : ''}">${money(net)}</td><td class="num rate">${pct(income ? net / income : null)}</td></tr>
+    </tbody>`;
+}
+
+/** Línea del ahorro acumulado del año, con punto por mes y tooltip. */
+function drawCumulative(el, data) {
+  if (!data.length || data.every((d) => !d.income && !d.expense)) { el.innerHTML = '<div class="empty">Sin datos todavía.</div>'; return; }
+  let acc = 0;
+  const pts = data.map((d) => ({ month: d.month, net: d.net, value: (acc += d.net) }));
+  const W = Math.max(280, el.clientWidth || 600), H = 220, padL = 52, padR = 14, padT = 14, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const hi = Math.max(0, ...pts.map((p) => p.value));
+  const lo = Math.min(0, ...pts.map((p) => p.value));
+  const top = niceMax(Math.max(hi, 1));
+  const bottom = lo < 0 ? -niceMax(-lo) : 0;
+  const x = (i) => padL + (pts.length === 1 ? plotW / 2 : (i / (pts.length - 1)) * plotW);
+  const y = (v) => padT + plotH - ((v - bottom) / (top - bottom)) * plotH;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ahorro acumulado">`;
+  for (const f of [0, 0.5, 1]) {
+    const v = bottom + f * (top - bottom);
+    svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    svg += `<text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end">${compact(v)}</text>`;
+  }
+  svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+  svg += `<path d="${pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ')}" fill="none" stroke="var(--series-projection)" stroke-width="2"/>`;
+  pts.forEach((p, i) => {
+    svg += `<circle cx="${x(i)}" cy="${y(p.value)}" r="4" fill="var(--series-projection)" stroke="var(--surface)" stroke-width="2"/>`;
+    if (pts.length <= 6 || i % 2 === 0 || i === pts.length - 1) {
+      svg += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${monthName(p.month, { month: pts.length > 6 && plotW < 400 ? 'narrow' : 'short' })}</text>`;
+    }
+    const w = pts.length === 1 ? plotW : plotW / (pts.length - 1);
+    svg += `<rect class="hit" data-i="${i}" x="${x(i) - w / 2}" y="${padT}" width="${w}" height="${plotH}" fill="transparent"/>`;
+  });
+  const lastP = pts[pts.length - 1];
+  svg += `<text x="${x(pts.length - 1)}" y="${y(lastP.value) - 10}" text-anchor="end" style="fill:var(--text);font-weight:600">${money(lastP.value)}</text>`;
+  svg += `</svg>`;
+  el.innerHTML = svg;
+  el.querySelectorAll('.hit').forEach((r) => {
+    const p = pts[+r.dataset.i];
+    r.addEventListener('pointermove', (e) => showTip(e, monthName(p.month), [
+      { color: 'var(--series-projection)', value: money(p.value), label: 'acumulado' },
+      { value: money(p.net), label: 'ahorro del mes' },
+    ]));
+    r.addEventListener('pointerleave', hideTip);
+  });
 }
 
 // ---------- MOVIMIENTOS ----------
@@ -1618,6 +1814,7 @@ function renderAll() {
   fillCategorySelect(currentType(), txForm.elements.category.value);
   const active = document.querySelector('.view.active').id;
   if (active === 'view-resumen') renderResumen();
+  if (active === 'view-anual') renderAnual();
   if (active === 'view-movimientos') renderMovimientos();
   if (active === 'view-ahorro') renderAhorro();
   if (active === 'view-ajustes') { renderAjustes(); renderCategoryList(); renderAccount(); }

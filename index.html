@@ -27,6 +27,9 @@
       <button class="tab active" data-view="resumen" role="tab">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg>
         <span>Resumen</span></button>
+      <button class="tab" data-view="anual" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14.5h2M14 14.5h2M8 17.5h2"/></svg>
+        <span>Año</span></button>
       <button class="tab" data-view="movimientos" role="tab">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 0 1 2-2Z"/><path d="M9 9h6M9 13h4"/></svg>
         <span>Movimientos</span></button>
@@ -91,6 +94,63 @@
           </div>
         </div>
         <div id="trend-chart" class="chart"></div>
+      </article>
+    </section>
+
+    <!-- ============ AÑO ============ -->
+    <section id="view-anual" class="view">
+      <div class="hero year-hero">
+        <div class="hero-text">
+          <div class="hello">Tu año en números</div>
+          <p class="quote" id="year-sub"></p>
+        </div>
+        <div class="month-bar">
+          <button class="icon-btn" id="prev-year" aria-label="Año anterior">‹</button>
+          <h1 id="year-label"></h1>
+          <button class="icon-btn" id="next-year" aria-label="Año siguiente">›</button>
+        </div>
+      </div>
+
+      <div class="kpis" id="year-kpis"></div>
+
+      <div class="grid-2">
+        <article class="card">
+          <h2>¿A dónde se fue el dinero?</h2>
+          <p class="muted small">Gasto del año por tipo y lo que supone de media al mes.</p>
+          <div id="year-groups"></div>
+        </article>
+        <article class="card">
+          <h2>Lo más destacado</h2>
+          <div id="year-highlights"></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Mes a mes</h2>
+          <div class="legend">
+            <span class="key"><i style="background:var(--series-income)"></i>Ingresos</span>
+            <span class="key"><i style="background:var(--series-expense)"></i>Gastos</span>
+          </div>
+        </div>
+        <div id="year-chart" class="chart"></div>
+      </article>
+
+      <div class="grid-2">
+        <article class="card">
+          <h2>Ahorro acumulado</h2>
+          <p class="muted small">Lo que llevas ahorrado en el año (ingresos − gastos), mes a mes.</p>
+          <div id="year-cum" class="chart"></div>
+        </article>
+        <article class="card">
+          <h2>Top categorías del año</h2>
+          <div id="year-top"></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <h2>Tabla por meses</h2>
+        <div class="table-wrap"><table class="preview year-table" id="year-table"></table></div>
       </article>
     </section>
 
