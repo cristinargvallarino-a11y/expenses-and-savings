@@ -276,6 +276,14 @@
           </label>
         </div>
       </article>
+      <article class="card">
+        <div class="card-head">
+          <h2>Categorías</h2>
+          <button class="btn primary small" id="new-cat" type="button">+ Nueva categoría</button>
+        </div>
+        <p class="muted small">Crea las tuyas y ponles palabras clave para que la app clasifique sola. Las de serie no se pueden borrar.</p>
+        <div id="cat-list"></div>
+      </article>
       <article class="card hidden" id="account-card">
         <h2>Cuenta de Google</h2>
         <div id="account-box"></div>
@@ -295,6 +303,32 @@
       </article>
     </section>
   </main>
+
+  <dialog id="cat-dialog" aria-labelledby="cat-title">
+    <form id="cat-form" autocomplete="off">
+      <h2 id="cat-title">Nueva categoría</h2>
+      <div class="segmented" role="radiogroup" id="cat-type">
+        <label><input type="radio" name="type" value="expense" checked><span>Gasto</span></label>
+        <label><input type="radio" name="type" value="income"><span>Ingreso</span></label>
+      </div>
+      <div class="form-grid">
+        <label class="field wide">Nombre
+          <input name="label" required maxlength="40" placeholder="Ej: Mascotas 🐶, Motosharing, Clases de baile…">
+        </label>
+        <label class="field wide" id="cat-group-field">Grupo
+          <select name="group"></select>
+        </label>
+        <label class="field wide">Palabras clave (opcional)
+          <input name="keywords" placeholder="Ej: veterinario, kiwoko, tiendanimal">
+        </label>
+      </div>
+      <p class="muted small">Separadas por comas. Si el concepto de un movimiento contiene alguna, irá a esta categoría.</p>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Guardar</button>
+        <button class="btn ghost" type="button" id="cat-cancel">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
 
   <button class="fab" id="fab" type="button" aria-label="Añadir movimiento">+</button>
   <div id="tooltip" role="tooltip"></div>

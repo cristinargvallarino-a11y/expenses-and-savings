@@ -384,7 +384,9 @@ function fillCategorySelect(type, selected) {
         ${EXPENSE_CATEGORIES.filter((c) => c.group === gid).map((c) => `<option value="${c.id}">${c.label}</option>`).join('')}
       </optgroup>`).join('');
   }
-  sel.value = selected || (type === 'income' ? 'nomina' : 'otros');
+  sel.insertAdjacentHTML('beforeend', '<option value="__new">➕ Nueva categoría…</option>');
+  sel.value = selected && CATEGORY_BY_ID[selected] ? selected : (type === 'income' ? 'nomina' : 'otros');
+  sel.dataset.prev = sel.value;
 }
 
 function currentType() { return txForm.elements.type.value; }
@@ -407,7 +409,21 @@ function autoClassify() {
   }
 }
 txForm.elements.description.addEventListener('input', autoClassify);
-txForm.elements.category.addEventListener('change', () => { categoryTouched = true; $('#auto-hint').textContent = ''; });
+txForm.elements.category.addEventListener('change', (e) => {
+  const sel = e.target;
+  if (sel.value === '__new') {
+    sel.value = sel.dataset.prev || 'otros';
+    openCategoryDialog({ type: currentType(), onSave: (cat) => {
+      fillCategorySelect(cat.type, cat.id);
+      categoryTouched = true;
+      $('#auto-hint').textContent = '';
+    } });
+    return;
+  }
+  sel.dataset.prev = sel.value;
+  categoryTouched = true;
+  $('#auto-hint').textContent = '';
+});
 
 function resetTxForm() {
   editingTxId = null;
@@ -1041,6 +1057,133 @@ function renderProjection(map) {
   hit.addEventListener('pointerleave', () => { xhair.setAttribute('visibility', 'hidden'); hideTip(); });
 }
 
+// ---------- CATEGORÍAS PROPIAS ----------
+
+const catDialog = $('#cat-dialog');
+const catForm = $('#cat-form');
+let catDialogCtx = null; // { editing, onSave }
+
+function usageCount(id) {
+  return state.transactions.filter((t) => t.category === id).length;
+}
+
+function renderCategoryList() {
+  const pill = (c) => {
+    const n = usageCount(c.id);
+    const count = n ? ` <span class="count">${n}</span>` : '';
+    if (!c.custom) return `<span class="cat-pill">${esc(c.label)}${count}</span>`;
+    return `<span class="cat-pill custom">${esc(c.label)}${count}
+      <button type="button" data-cat-edit="${c.id}" aria-label="Editar ${esc(c.label)}">✏️</button>
+      <button type="button" data-cat-del="${c.id}" aria-label="Borrar ${esc(c.label)}">🗑️</button></span>`;
+  };
+  const groups = Object.entries(GROUPS).map(([gid, g]) => `
+    <div class="cat-group">
+      <h3><i class="dot" style="background:${g.color}"></i>${g.label}</h3>
+      <div class="cat-pills">${EXPENSE_CATEGORIES.filter((c) => c.group === gid).map(pill).join('')}</div>
+    </div>`).join('');
+  $('#cat-list').innerHTML = groups + `
+    <div class="cat-group">
+      <h3><i class="dot" style="background:var(--series-income)"></i>Ingresos</h3>
+      <div class="cat-pills">${INCOME_CATEGORIES.map(pill).join('')}</div>
+    </div>`;
+}
+
+function openCategoryDialog({ type = 'expense', editing = null, onSave = null } = {}) {
+  catDialogCtx = { editing, onSave };
+  catForm.reset();
+  const kind = editing ? editing.type : type;
+  catForm.querySelector(`input[name="type"][value="${kind}"]`).checked = true;
+  // El tipo no se cambia al editar: los movimientos ya son gastos o ingresos.
+  catForm.querySelectorAll('input[name="type"]').forEach((r) => { r.disabled = Boolean(editing); });
+  catForm.elements.group.innerHTML = Object.entries(GROUPS)
+    .map(([gid, g]) => `<option value="${gid}">${g.label}</option>`).join('');
+  catForm.elements.group.value = editing ? editing.group : 'otros';
+  catForm.elements.label.value = editing ? editing.label : '';
+  catForm.elements.keywords.value = editing ? (editing.keywords || []).join(', ') : '';
+  $('#cat-title').textContent = editing ? 'Editar categoría' : 'Nueva categoría';
+  syncCategoryTypeField();
+  if (typeof catDialog.showModal === 'function') catDialog.showModal();
+  else catDialog.setAttribute('open', '');
+  catForm.elements.label.focus();
+}
+
+function closeCategoryDialog() {
+  if (typeof catDialog.close === 'function') catDialog.close();
+  else catDialog.removeAttribute('open');
+  catDialogCtx = null;
+}
+
+function syncCategoryTypeField() {
+  $('#cat-group-field').classList.toggle('hidden', catForm.elements.type.value === 'income');
+}
+
+catForm.querySelectorAll('input[name="type"]').forEach((r) => r.addEventListener('change', syncCategoryTypeField));
+$('#cat-cancel').addEventListener('click', closeCategoryDialog);
+$('#new-cat').addEventListener('click', () => openCategoryDialog());
+
+catForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = catForm.elements;
+  const { editing, onSave } = catDialogCtx || {};
+  const type = editing ? editing.type : f.type.value;
+  const label = f.label.value.trim();
+  if (!label) return;
+  const clash = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]
+    .find((c) => c.label.toLowerCase() === label.toLowerCase() && (!editing || c.id !== editing.id));
+  if (clash) { toast(`Ya existe una categoría "${clash.label}"`); return; }
+  const cat = {
+    id: editing ? editing.id : 'c_' + uid(),
+    label,
+    type,
+    group: type === 'income' ? undefined : f.group.value,
+    keywords: f.keywords.value.split(',').map((k) => k.trim()).filter(Boolean),
+  };
+  const list = (state.settings.customCategories || []).filter((c) => c.id !== cat.id);
+  state.settings.customCategories = [...list, cat];
+  refreshCategories();
+  closeCategoryDialog();
+
+  // ¿Hay movimientos en "Otros" que encajan con las palabras clave?
+  const otherId = type === 'income' ? 'otros_ing' : 'otros';
+  const matches = state.transactions.filter((t) => t.type === type && t.category === otherId
+    && classify(t.description, type, state.settings.rules) === cat.id);
+  if (matches.length && confirm(`He encontrado ${matches.length === 1 ? '1 movimiento' : matches.length + ' movimientos'} en "Otros" que ${matches.length === 1 ? 'encaja' : 'encajan'} con "${label}". ¿Los muevo a esta categoría?`)) {
+    for (const t of matches) t.category = cat.id;
+  }
+  save();
+  renderAll();
+  toast(editing ? 'Categoría actualizada' : `Categoría "${label}" creada`);
+  if (onSave) onSave(cat);
+});
+
+$('#cat-list').addEventListener('click', (e) => {
+  const editId = e.target.closest('[data-cat-edit]')?.dataset.catEdit;
+  const delId = e.target.closest('[data-cat-del]')?.dataset.catDel;
+  const custom = state.settings.customCategories || [];
+  if (editId) {
+    const cat = custom.find((c) => c.id === editId);
+    if (cat) openCategoryDialog({ editing: cat });
+    return;
+  }
+  if (!delId) return;
+  const cat = custom.find((c) => c.id === delId);
+  if (!cat) return;
+  const n = usageCount(delId);
+  const fallback = cat.type === 'income' ? 'otros_ing' : 'otros';
+  const msg = n
+    ? `¿Borrar "${cat.label}"? ${n === 1 ? 'Su movimiento pasará' : `Sus ${n} movimientos pasarán`} a "${CATEGORY_BY_ID[fallback].label}".`
+    : `¿Borrar la categoría "${cat.label}"?`;
+  if (!confirm(msg)) return;
+  for (const t of state.transactions) if (t.category === delId) t.category = fallback;
+  const rules = { ...(state.settings.rules || {}) };
+  for (const [k, v] of Object.entries(rules)) if (v === delId) delete rules[k];
+  state.settings.rules = rules;
+  state.settings.customCategories = custom.filter((c) => c.id !== delId);
+  save();
+  renderAll();
+  toast('Categoría borrada');
+});
+
 // ---------- AJUSTES ----------
 
 function renderAjustes() {
@@ -1330,12 +1473,19 @@ window.addEventListener('online', () => { if (cloudOn() && isConnected()) syncNo
 
 // ---------- Arranque ----------
 
+function refreshCategories() {
+  setCustomCategories(state.settings.customCategories || []);
+}
+
 function renderAll() {
+  refreshCategories();
+  // El desplegable del formulario recoge las categorías nuevas o borradas.
+  fillCategorySelect(currentType(), txForm.elements.category.value);
   const active = document.querySelector('.view.active').id;
   if (active === 'view-resumen') renderResumen();
   if (active === 'view-movimientos') renderMovimientos();
   if (active === 'view-ahorro') renderAhorro();
-  if (active === 'view-ajustes') { renderAjustes(); renderAccount(); }
+  if (active === 'view-ajustes') { renderAjustes(); renderCategoryList(); renderAccount(); }
 }
 
 let resizeTimer;
@@ -1345,6 +1495,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
+refreshCategories();
 $('#list-month').value = localMonth();
 resetTxForm();
 renderAll();

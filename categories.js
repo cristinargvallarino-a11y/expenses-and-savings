@@ -63,6 +63,28 @@ const CATEGORY_BY_ID = Object.fromEntries(
   [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].map((c) => [c.id, c])
 );
 
+const BUILTIN_EXPENSE = EXPENSE_CATEGORIES.slice();
+const BUILTIN_INCOME = INCOME_CATEGORIES.slice();
+
+/**
+ * Añade las categorías creadas por la persona (guardadas en sus ajustes) a las
+ * de serie. Cada una: { id, label, type: 'expense' | 'income', group, keywords }.
+ * Se puede llamar las veces que haga falta: siempre parte de las de serie.
+ */
+function setCustomCategories(list = []) {
+  const custom = (list || []).filter((c) => c && c.id && c.label);
+  const expense = custom.filter((c) => c.type !== 'income' && GROUPS[c.group])
+    .map((c) => ({ ...c, keywords: c.keywords || [], custom: true }));
+  const income = custom.filter((c) => c.type === 'income')
+    .map((c) => ({ ...c, keywords: c.keywords || [], custom: true }));
+  EXPENSE_CATEGORIES.length = 0;
+  EXPENSE_CATEGORIES.push(...BUILTIN_EXPENSE, ...expense);
+  INCOME_CATEGORIES.length = 0;
+  INCOME_CATEGORIES.push(...BUILTIN_INCOME, ...income);
+  for (const k of Object.keys(CATEGORY_BY_ID)) delete CATEGORY_BY_ID[k];
+  for (const c of [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]) CATEGORY_BY_ID[c.id] = c;
+}
+
 function normalize(text) {
   // Pads with spaces so keywords like "bar " or "dia " only match whole words.
   return ' ' + text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';
@@ -92,9 +114,11 @@ function classify(description, type, rules) {
     for (const kw of cat.keywords) {
       const k = normalize(kw).trim();
       const needle = kw.endsWith(' ') ? ' ' + k + ' ' : k;
-      if (text.includes(needle) && k.length > bestLen) {
+      // Las palabras de tus categorías mandan sobre las de serie.
+      const score = k.length + (cat.custom ? 1000 : 0);
+      if (text.includes(needle) && score > bestLen) {
         best = cat.id;
-        bestLen = k.length;
+        bestLen = score;
       }
     }
   }
@@ -102,5 +126,5 @@ function classify(description, type, rules) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { GROUPS, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CATEGORY_BY_ID, classify, ruleKey, normalize };
+  module.exports = { GROUPS, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CATEGORY_BY_ID, classify, ruleKey, normalize, setCustomCategories };
 }

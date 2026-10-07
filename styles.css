@@ -331,6 +331,23 @@ input[type="range"] { flex: 1; padding: 0; accent-color: var(--accent); box-shad
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); padding: 0; }
 
+/* ---------- Categorías ---------- */
+.cat-group { padding: 12px 0; border-bottom: 1px dashed var(--grid); }
+.cat-group:last-child { border-bottom: 0; }
+.cat-group h3 { font-size: 1rem; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cat-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 0.82rem; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.cat-pill.custom { background: var(--accent-soft); color: var(--text); padding-right: 4px; }
+.cat-pill .count { color: var(--muted); font-size: 0.75rem; }
+.cat-pill button { border: 0; background: transparent; cursor: pointer; font-size: 0.8rem; padding: 2px 4px; border-radius: 6px; }
+.cat-pill button:hover { background: var(--surface); }
+dialog {
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; width: min(460px, calc(100% - 32px));
+  background: var(--surface); color: var(--text); box-shadow: 0 30px 60px -20px rgba(40, 25, 10, .45);
+}
+dialog::backdrop { background: rgba(40, 28, 18, .35); backdrop-filter: blur(2px); }
+dialog .segmented { margin-top: 12px; }
+
 /* ---------- Objetivos ---------- */
 .goal { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; margin-top: 12px; background: var(--page); }
 .goal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
