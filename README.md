@@ -2,6 +2,14 @@
 
 App web para registrar **gastos, ingresos, ahorro e inversión**. Sin instalación ni dependencias: abre `index.html` en el navegador. Los datos se guardan solo en tu navegador (`localStorage`); desde **Ajustes** puedes descargar/restaurar una copia.
 
+## Usarla en el iPhone
+
+1. Abre **https://cristinargvallarino-a11y.github.io/expenses-and-savings/** en **Safari**.
+2. Pulsa **Compartir → Añadir a pantalla de inicio**.
+3. Ábrela siempre desde ese icono: se abre a pantalla completa y funciona sin conexión.
+
+> Ojo: la app instalada en la pantalla de inicio y la que abres en Safari guardan los datos por separado. Usa siempre la misma.
+
 ## Qué hace
 
 **Resumen (por mes)**
@@ -30,5 +38,6 @@ App web para registrar **gastos, ingresos, ahorro e inversión**. Sin instalaci�
 | `categories.js` | Grupos, categorías y clasificador por palabras clave |
 | `finance.js` | Cálculos: resúmenes, ritmo de ahorro, tiempo hasta objetivo |
 | `app.js` | Estado, vistas y gráficos |
+| `manifest.webmanifest`, `sw.js`, `icons/` | Instalación en el móvil y uso sin conexión |
 
 Para añadir palabras a la clasificación automática, edita las listas `keywords` de `categories.js`.
