@@ -298,6 +298,12 @@ input[type="range"] { flex: 1; padding: 0; accent-color: var(--accent); box-shad
 .segmented input:focus-visible + span { outline: 2px solid var(--accent); }
 
 /* ---------- Lista de movimientos ---------- */
+.list-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: 8px 10px; align-items: center; margin-bottom: 6px; }
+@media (max-width: 640px) { .list-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .list-filters > select, .list-filters > input[type=search] { grid-column: 1 / -1; } }
+.list-total { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--surface-2); border-radius: 12px; padding: 10px 14px; margin: 8px 0 4px; font-size: 0.9rem; }
+.hbar.link, .tx-link { cursor: pointer; border-radius: 10px; }
+.hbar.link:hover { background: var(--surface-2); }
+.hbar.link .val::after { content: " ›"; color: var(--muted); }
 .tx { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px dashed var(--grid); }
 .tx:last-child { border-bottom: 0; }
 .tx .date { color: var(--muted); font-size: 0.8rem; width: 44px; }

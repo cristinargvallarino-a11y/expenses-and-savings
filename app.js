@@ -229,7 +229,7 @@ function renderResumen() {
     .sort((a, b) => b.amount - a.amount);
   const max = Math.max(...groups.map((g) => g.amount), 1);
   $('#group-bars').innerHTML = groups.length ? groups.map((g) => `
-    <div class="hbar" data-group="${g.id}">
+    <div class="hbar link" data-group="${g.id}" data-filter="g:${g.id}" role="button" tabindex="0">
       <div class="name"><i class="dot" style="background:${g.color}"></i><span>${g.label}</span></div>
       <div class="track"><div class="fill" style="width:${(g.amount / max) * 100}%;background:${g.color}"></div></div>
       <div class="val num">${money(g.amount)}<small>${s.income ? pct(g.amount / s.income) : pct(g.amount / s.expense)}</small></div>
@@ -258,7 +258,7 @@ function renderResumen() {
       <div><div class="muted small">En ${year} (hasta este mes)</div><div class="pace-big" style="font-size:1.5rem">${money(ytdTotal)}</div></div>
     </div>
     ${travelCats.map((c) => `
-      <div class="hbar">
+      <div class="hbar link" data-filter="c:${c.id}" role="button" tabindex="0">
         <div class="name"><span>${c.id === 'vuelos' ? '🛫' : c.id === 'hoteles' ? '🏨' : '🧳'} ${c.label}</span></div>
         <div class="track"><div class="fill" style="width:${ytdTotal ? ((ytd[c.id] || 0) / ytdTotal) * 100 : 0}%;background:var(--g-viajes)"></div></div>
         <div class="val num">${money(ytd[c.id] || 0)}<small>${money(s.byCategory[c.id] || 0)} este mes</small></div>
@@ -297,7 +297,7 @@ function renderResumen() {
     const c = CATEGORY_BY_ID[id];
     const g = GROUPS[c.group];
     return `
-      <div class="hbar">
+      <div class="hbar link" data-filter="c:${id}" role="button" tabindex="0">
         <div class="name"><i class="dot" style="background:${g.color}"></i><span>${c.label}</span></div>
         <div class="track"><div class="fill" style="width:${(amt / topMax) * 100}%;background:${g.color}"></div></div>
         <div class="val num">${money(amt)}</div>
@@ -306,6 +306,16 @@ function renderResumen() {
 
   renderTrend();
 }
+
+// Tocar una barra del resumen abre sus movimientos de ese mes.
+$('#view-resumen').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-filter]');
+  if (row) { hideTip(); showMovements(row.dataset.filter, viewMonth); }
+});
+$('#view-resumen').addEventListener('keydown', (e) => {
+  const row = e.target.closest('[data-filter]');
+  if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); showMovements(row.dataset.filter, viewMonth); }
+});
 
 function advice503020(needs, wants, saved) {
   if (saved >= 0.2 && needs <= 0.5) return '👏 Vas muy bien: cubres lo necesario y ahorras al menos un 20%.';
@@ -488,25 +498,81 @@ function learnCategory(tx, previousCategory) {
 $('#tx-cancel').addEventListener('click', resetTxForm);
 $('#list-month').addEventListener('change', renderMovimientos);
 $('#list-filter').addEventListener('change', renderMovimientos);
+$('#list-all-months').addEventListener('change', renderMovimientos);
+let searchTimer;
+$('#list-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderMovimientos, 200); });
+$('#list-clear').addEventListener('click', () => {
+  $('#list-filter').value = 'all';
+  $('#list-search').value = '';
+  $('#list-all-months').checked = false;
+  renderMovimientos();
+});
+
+/** Abre Movimientos filtrado (p. ej. desde una barra del Resumen). filter: 'g:<grupo>' o 'c:<categoría>'. */
+function showMovements(filter, month) {
+  $('#list-month').value = month;
+  $('#list-all-months').checked = false;
+  $('#list-search').value = '';
+  showView('movimientos');
+  $('#list-filter').value = filter;
+  renderMovimientos();
+}
+
+/** Opciones del filtro: tipo, grupos y categorías (incluidas las propias). */
+function fillListFilter() {
+  const sel = $('#list-filter');
+  const current = sel.value || 'all';
+  const opt = (v, label) => `<option value="${v}">${esc(label)}</option>`;
+  sel.innerHTML = `
+    <optgroup label="Tipo">${opt('all', 'Todas las categorías')}${opt('expense', 'Solo gastos')}${opt('income', 'Solo ingresos')}</optgroup>
+    ${Object.entries(GROUPS).map(([gid, g]) => `
+      <optgroup label="${esc(g.label)}">
+        ${opt('g:' + gid, `Todo ${g.label}`)}
+        ${EXPENSE_CATEGORIES.filter((c) => c.group === gid).map((c) => opt('c:' + c.id, c.label)).join('')}
+      </optgroup>`).join('')}
+    <optgroup label="Ingresos">${INCOME_CATEGORIES.map((c) => opt('c:' + c.id, c.label)).join('')}</optgroup>`;
+  sel.value = [...sel.options].some((o) => o.value === current) ? current : 'all';
+}
+
+function matchesFilter(t, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'expense' || filter === 'income') return t.type === filter;
+  const c = CATEGORY_BY_ID[t.category] || CATEGORY_BY_ID.otros;
+  if (filter.startsWith('g:')) return t.type === 'expense' && c.group === filter.slice(2);
+  if (filter.startsWith('c:')) return t.category === filter.slice(2);
+  return true;
+}
 
 function renderMovimientos() {
+  fillListFilter();
+  const allMonths = $('#list-all-months').checked;
+  $('#list-month').disabled = allMonths;
   const month = $('#list-month').value || localMonth();
   const filter = $('#list-filter').value;
+  const query = normalize($('#list-search').value).trim();
+  const filtered = filter !== 'all' || query || allMonths;
+  $('#list-clear').classList.toggle('hidden', !filtered);
   const list = state.transactions
-    .filter((t) => t.date.startsWith(month) && (filter === 'all' || t.type === filter))
+    .filter((t) => (allMonths || t.date.startsWith(month)) && matchesFilter(t, filter)
+      && (!query || normalize(t.description).includes(query)))
     .sort((a, b) => b.date.localeCompare(a.date));
   const el = $('#tx-list');
+  const where = allMonths ? 'en ningún mes' : `en ${monthName(month)}`;
   if (!list.length) {
-    el.innerHTML = `<div class="empty">No hay movimientos en ${monthName(month)}.</div>`;
+    el.innerHTML = `<div class="empty">No hay movimientos ${filtered ? 'con estos filtros ' : ''}${where}.</div>`;
     return;
   }
+  const inc = list.filter((t) => t.type === 'income').reduce((a, t) => a + t.amount, 0);
+  const exp = list.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amount, 0);
+  const totalBox = filtered ? `<div class="list-total"><span><strong>${list.length}</strong> ${list.length === 1 ? 'movimiento' : 'movimientos'}${allMonths ? ' (todos los meses)' : ''}</span>
+    <span>${exp ? `Gastos <strong>${money(exp)}</strong>` : ''}${exp && inc ? ' · ' : ''}${inc ? `Ingresos <strong>${money(inc)}</strong>` : ''}</span></div>` : '';
   el.innerHTML = list.map((t) => {
     const c = CATEGORY_BY_ID[t.category] || CATEGORY_BY_ID.otros;
     const color = t.type === 'income' ? 'var(--series-income)' : GROUPS[c.group].color;
     const groupLabel = t.type === 'income' ? 'Ingreso' : GROUPS[c.group].label;
     return `
       <div class="tx" data-id="${t.id}">
-        <div class="date num">${t.date.slice(8, 10)}/${t.date.slice(5, 7)}</div>
+        <div class="date num">${t.date.slice(8, 10)}/${t.date.slice(5, 7)}${allMonths ? '/' + t.date.slice(2, 4) : ''}</div>
         <div class="desc">
           <div>${esc(t.description)}</div>
           <div class="chip"><i class="dot" style="background:${color}"></i>${groupLabel} · ${c.label}</div>
@@ -518,9 +584,8 @@ function renderMovimientos() {
         </div>
       </div>`;
   }).join('');
-  const inc = list.filter((t) => t.type === 'income').reduce((a, t) => a + t.amount, 0);
-  const exp = list.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amount, 0);
-  el.insertAdjacentHTML('beforeend', `<div class="row gap wrap top-gap small muted">${list.length} movimientos · Ingresos ${money(inc)} · Gastos ${money(exp)}</div>`);
+  el.insertAdjacentHTML('afterbegin', totalBox);
+  if (!filtered) el.insertAdjacentHTML('beforeend', `<div class="row gap wrap top-gap small muted">${list.length} movimientos · Ingresos ${money(inc)} · Gastos ${money(exp)}</div>`);
 }
 
 $('#tx-list').addEventListener('click', (e) => {

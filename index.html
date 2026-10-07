@@ -60,7 +60,7 @@
       <div class="grid-2">
         <article class="card">
           <h2>¿A dónde va tu dinero?</h2>
-          <p class="muted small">Gasto del mes por tipo. El % es sobre tus ingresos del mes.</p>
+          <p class="muted small">Gasto del mes por tipo. El % es sobre tus ingresos del mes. Toca una barra para ver sus movimientos.</p>
           <div id="group-bars"></div>
         </article>
         <article class="card">
@@ -129,12 +129,13 @@
           <h2>Movimientos</h2>
           <div class="row gap">
             <input type="month" id="list-month" aria-label="Mes">
-            <select id="list-filter" aria-label="Filtrar">
-              <option value="all">Todos</option>
-              <option value="income">Solo ingresos</option>
-              <option value="expense">Solo gastos</option>
-            </select>
           </div>
+        </div>
+        <div class="list-filters">
+          <select id="list-filter" aria-label="Filtrar por categoría"></select>
+          <input type="search" id="list-search" placeholder="🔍 Buscar concepto…" aria-label="Buscar concepto">
+          <label class="row gap small"><input type="checkbox" id="list-all-months"> Todos los meses</label>
+          <button class="btn ghost small hidden" id="list-clear" type="button">✕ Quitar filtros</button>
         </div>
         <div id="tx-list"></div>
         <div class="row gap wrap top-gap">
