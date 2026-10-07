@@ -162,13 +162,20 @@ function hideTip() { tip.style.display = 'none'; }
 
 // ---------- Navegación ----------
 
-document.querySelectorAll('.tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn));
-    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + btn.dataset.view));
-    hideTip();
-    renderAll();
-  });
+function showView(name) {
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
+  $('#fab').classList.toggle('hidden', name === 'movimientos' || name === 'ajustes');
+  hideTip();
+  window.scrollTo({ top: 0 });
+  renderAll();
+}
+
+document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => showView(btn.dataset.view)));
+
+$('#fab').addEventListener('click', () => {
+  showView('movimientos');
+  txForm.elements.amount.focus();
 });
 
 $('#prev-month').addEventListener('click', () => { viewMonth = addMonths(viewMonth, -1); renderResumen(); });
@@ -176,7 +183,26 @@ $('#next-month').addEventListener('click', () => { viewMonth = addMonths(viewMon
 
 // ---------- RESUMEN ----------
 
+const QUOTES = [
+  'Un euro ahorrado es un euro ganado.',
+  'Cuida los céntimos, que los euros se cuidan solos.',
+  'No ahorres lo que te sobra: gasta lo que te sobra después de ahorrar.',
+  'Poco a poco se llena el cántaro.',
+  'Págate a ti primero.',
+  'El mejor momento para empezar a ahorrar fue ayer; el segundo mejor, hoy.',
+  'Los pequeños gastos son como pequeñas goteras: hunden grandes barcos.',
+];
+
+function renderHello() {
+  const h = new Date().getHours();
+  const greeting = h < 6 ? 'Buenas noches' : h < 13 ? 'Buenos días' : h < 21 ? 'Buenas tardes' : 'Buenas noches';
+  $('#hello').textContent = `${greeting} ✨`;
+  const day = Math.floor(Date.now() / 86400000);
+  $('#quote').textContent = `“${QUOTES[day % QUOTES.length]}”`;
+}
+
 function renderResumen() {
+  renderHello();
   $('#month-label').textContent = monthName(viewMonth);
   const s = monthSummary(state.transactions, viewMonth, CATEGORY_BY_ID);
   const prev = monthSummary(state.transactions, addMonths(viewMonth, -1), CATEGORY_BY_ID);

@@ -1,10 +1,10 @@
 // Service worker: permite abrir la app sin conexión.
 // Estrategia "red primero": siempre intenta descargar la última versión y,
 // si no hay conexión, usa la copia guardada.
-const CACHE = 'mis-finanzas-v3';
+const CACHE = 'mis-finanzas-v4';
 const SHELL = [
   './', 'index.html', 'styles.css', 'categories.js', 'finance.js', 'config.js', 'sync.js', 'app.js',
-  'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
+  'manifest.webmanifest', 'img/hero.jpg', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {

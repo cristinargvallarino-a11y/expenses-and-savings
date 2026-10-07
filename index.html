@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mis Finanzas</title>
   <meta name="description" content="Registro de gastos, ingresos, ahorro e inversión">
-  <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f9f0e7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c1815" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Finanzas">
@@ -14,27 +14,45 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/favicon-64.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=DM+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">💶 Mis Finanzas</div>
+    <div class="brand"><img src="img/hero.jpg" alt="">Mis Finanzas</div>
     <button class="sync-pill hidden" id="sync-pill" type="button"></button>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="resumen" role="tab">Resumen</button>
-      <button class="tab" data-view="movimientos" role="tab">Movimientos</button>
-      <button class="tab" data-view="ahorro" role="tab">Ahorro e inversión</button>
-      <button class="tab" data-view="ajustes" role="tab">Ajustes</button>
+      <button class="tab active" data-view="resumen" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg>
+        <span>Resumen</span></button>
+      <button class="tab" data-view="movimientos" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 0 1 2-2Z"/><path d="M9 9h6M9 13h4"/></svg>
+        <span>Movimientos</span></button>
+      <button class="tab" data-view="ahorro" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 11c0-3.9-3.1-6-7-6-1.4 0-2.7.3-3.8.8L6 4v3.4C4.8 8.4 4 9.6 4 11H2.5v3H4.6c.6 1.3 1.6 2.4 2.9 3.1V20h3v-2h3v2h3v-3c1.5-1 2.5-2.6 2.5-4.5V11Z"/><circle cx="15" cy="10" r=".6" fill="currentColor"/></svg>
+        <span><span class="tab-long">Ahorro e inversión</span><span class="tab-short">Ahorro</span></span></button>
+      <button class="tab" data-view="ajustes" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+        <span>Ajustes</span></button>
     </nav>
   </header>
 
   <main>
     <!-- ============ RESUMEN ============ -->
     <section id="view-resumen" class="view active">
-      <div class="month-bar">
-        <button class="icon-btn" id="prev-month" aria-label="Mes anterior">‹</button>
-        <h1 id="month-label"></h1>
-        <button class="icon-btn" id="next-month" aria-label="Mes siguiente">›</button>
+      <div class="hero">
+        <div class="hero-text">
+          <div class="hello" id="hello">Hola</div>
+          <p class="quote" id="quote"></p>
+        </div>
+        <div class="month-bar">
+          <button class="icon-btn" id="prev-month" aria-label="Mes anterior">‹</button>
+          <h1 id="month-label"></h1>
+          <button class="icon-btn" id="next-month" aria-label="Mes siguiente">›</button>
+        </div>
+        <figure class="polaroid"><img src="img/hero.jpg" alt="Ilustración retro de una mujer abrazando billetes y monedas"><figcaption>¡a ahorrar!</figcaption></figure>
       </div>
 
       <div class="kpis" id="kpis"></div>
@@ -244,6 +262,7 @@
     </section>
   </main>
 
+  <button class="fab" id="fab" type="button" aria-label="Añadir movimiento">+</button>
   <div id="tooltip" role="tooltip"></div>
   <div id="toast" aria-live="polite"></div>
 
