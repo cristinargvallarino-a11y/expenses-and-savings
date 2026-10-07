@@ -529,69 +529,167 @@ $('#copy-fixed').addEventListener('click', () => {
   toast(`${toCopy.length} gastos fijos copiados de ${monthName(prev, { month: 'long' })}`);
 });
 
-// Importación CSV de extractos bancarios.
+// ---------- Importar extractos del banco (CSV o Excel) ----------
+
+const IMPORT_MAPS_KEY = 'mf-import-maps';
+let importJob = null; // { name, rows, mapping, signature }
+
 $('#csv-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if (!file) return;
-  const text = await file.text();
-  const added = parseBankCsv(text);
   e.target.value = '';
-  if (!added.length) { toast('No he encontrado movimientos en ese archivo'); return; }
-  state.transactions.push(...added);
-  save();
-  $('#list-month').value = added[0].date.slice(0, 7);
-  renderMovimientos();
-  toast(`${added.length} movimientos importados y clasificados`);
+  if (!file) return;
+  try {
+    const buffer = await file.arrayBuffer();
+    const rows = isSpreadsheet(buffer) ? await spreadsheetRows(buffer) : csvToRows(decodeText(buffer));
+    if (!rows.length) { toast('El archivo está vacío'); return; }
+    const mapping = detectMapping(rows);
+    const signature = mapping.headers.join('|');
+    const saved = signature && loadImportMaps()[signature];
+    importJob = { name: file.name, rows, signature, mapping: saved ? { ...mapping, ...saved } : mapping };
+    $('#import-invert').checked = Boolean(saved && saved.invert);
+    $('#import-adv').open = false;
+    renderImportPreview();
+    $('#import-card').classList.remove('hidden');
+    $('#import-card').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    console.error(err);
+    toast('No he podido leer ese archivo. Prueba a descargarlo en CSV.');
+  }
 });
 
-function parseBankCsv(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  if (!lines.length) return [];
-  const delim = [';', '\t', ','].sort((a, b) => lines[0].split(b).length - lines[0].split(a).length)[0];
-  const out = [];
-  for (const line of lines) {
-    const cells = splitCsvLine(line, delim);
-    let date = null, amount = null, desc = '';
-    for (const raw of cells) {
-      const c = raw.trim();
-      if (!date) {
-        let m = c.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
-        if (m) { const yy = m[3].length === 2 ? '20' + m[3] : m[3]; date = `${yy}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; continue; }
-        m = c.match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (m) { date = `${m[1]}-${m[2]}-${m[3]}`; continue; }
-      }
-      if (amount === null && /^[-+]?[\d.,\s]+(€|EUR)?$/i.test(c) && /\d/.test(c)) {
-        amount = parseAmount(c);
-        continue;
-      }
-      if (c.length > desc.length && /[a-zA-ZÀ-ÿ]/.test(c)) desc = c;
-    }
-    if (!date || amount === null || !amount || !desc) continue;
-    const type = amount < 0 ? 'expense' : 'income';
-    const category = classify(desc, type) || (type === 'income' ? 'otros_ing' : 'otros');
-    out.push({ id: uid(), type, date, amount: Math.abs(amount), description: desc, category });
+/** Lee la hoja con más filas de un Excel (.xlsx o .xls). La librería se carga solo cuando hace falta. */
+async function spreadsheetRows(buffer) {
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'lib/xlsx.full.min.js';
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('No se pudo cargar el lector de Excel'));
+      document.head.appendChild(s);
+    });
   }
-  return out;
+  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+  let best = [];
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+    if (rows.length > best.length) best = rows;
+  }
+  return best.filter((r) => r.some((c) => String(c).trim() !== ''));
 }
 
-function splitCsvLine(line, delim) {
-  const out = [];
-  let cur = '', q = false;
-  for (const ch of line) {
-    if (ch === '"') q = !q;
-    else if (ch === delim && !q) { out.push(cur); cur = ''; }
-    else cur += ch;
-  }
-  out.push(cur);
-  return out;
+function loadImportMaps() {
+  try { return JSON.parse(localStorage.getItem(IMPORT_MAPS_KEY)) || {}; } catch (e) { return {}; }
 }
 
-function parseAmount(s) {
-  let c = s.replace(/[€\sEUR]/gi, '');
-  if (c.includes(',') && c.lastIndexOf(',') > c.lastIndexOf('.')) c = c.replace(/\./g, '').replace(',', '.');
-  else c = c.replace(/,/g, '');
-  return parseFloat(c);
+function txKey(t) {
+  return `${t.date}|${Math.abs(t.amount).toFixed(2)}|${normalize(t.description).trim()}`;
 }
+
+function importItems() {
+  const { items, skipped } = extractRows(importJob.rows, importJob.mapping, { invert: $('#import-invert').checked });
+  const existing = new Set(state.transactions.map(txKey));
+  const fresh = [];
+  let duplicates = 0;
+  for (const it of items) {
+    if (existing.has(txKey(it))) { duplicates++; continue; }
+    existing.add(txKey(it));
+    const type = it.amount < 0 ? 'expense' : 'income';
+    const category = classify(it.description, type) || (type === 'income' ? 'otros_ing' : 'otros');
+    fresh.push({ type, date: it.date, amount: Math.round(Math.abs(it.amount) * 100) / 100, description: it.description, category });
+  }
+  return { fresh, skipped, duplicates };
+}
+
+function renderImportPreview() {
+  const { rows, mapping } = importJob;
+  const ncols = Math.max(...rows.slice(0, 200).map((r) => r.length));
+  const sample = rows[mapping.headerRow + 1] || [];
+  const colName = (i) => {
+    const h = mapping.headers[i];
+    const v = sample[i];
+    const ex = (v instanceof Date ? v.toLocaleDateString('es-ES') : String(v ?? '')).trim().slice(0, 18);
+    return h ? `${h}${ex ? ' (' + ex + ')' : ''}` : `Columna ${i + 1}${ex ? ': ' + ex : ''}`;
+  };
+  const options = (sel) => ['<option value="-1">—</option>']
+    .concat(Array.from({ length: ncols }, (_, i) => `<option value="${i}" ${sel === i ? 'selected' : ''}>${esc(colName(i))}</option>`))
+    .join('');
+  const map = $('#import-mapping');
+  map.querySelector('[data-map="date"]').innerHTML = options(mapping.date);
+  map.querySelector('[data-map="description"]').innerHTML = options(mapping.description[0] ?? -1);
+  map.querySelector('[data-map="amount"]').innerHTML = options(mapping.amount);
+  map.querySelector('[data-map="debit"]').innerHTML = options(mapping.debit);
+  map.querySelector('[data-map="credit"]').innerHTML = options(mapping.credit);
+  map.querySelector('[data-map="dateOrder"]').value = mapping.dateOrder;
+  $('#import-file').textContent = importJob.name;
+
+  const { fresh, skipped, duplicates } = importItems();
+  const exp = fresh.filter((t) => t.type === 'expense');
+  const inc = fresh.filter((t) => t.type === 'income');
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const parts = [`<strong>${plural(fresh.length, 'movimiento nuevo', 'movimientos nuevos')}</strong>: ${plural(exp.length, 'gasto', 'gastos')} (${money(exp.reduce((a, t) => a + t.amount, 0))}) y ${plural(inc.length, 'ingreso', 'ingresos')} (${money(inc.reduce((a, t) => a + t.amount, 0))}).`];
+  if (duplicates) parts.push(`${duplicates} ya los tenías y no se repetirán.`);
+  if (skipped) parts.push(`${skipped} filas sin fecha o importe se ignoran (cabeceras, totales…).`);
+  if (!fresh.length && !duplicates) parts.push('⚠️ No sale ningún movimiento: revisa qué columna es la fecha y cuál el importe.');
+  $('#import-summary').innerHTML = parts.join(' ');
+  if (!fresh.length && !duplicates) $('#import-adv').open = true;
+  $('#import-confirm').disabled = !fresh.length;
+  $('#import-confirm').textContent = fresh.length ? `Importar ${fresh.length}` : 'Importar';
+
+  const shown = fresh.slice(0, 12);
+  $('#import-table').innerHTML = `
+    <thead><tr><th>Fecha</th><th>Concepto y categoría</th><th class="r">Importe</th></tr></thead>
+    <tbody>${shown.map((t) => {
+      const c = CATEGORY_BY_ID[t.category];
+      const color = t.type === 'income' ? 'var(--series-income)' : GROUPS[c.group].color;
+      return `<tr>
+        <td class="num">${t.date.slice(8, 10)}/${t.date.slice(5, 7)}/${t.date.slice(2, 4)}</td>
+        <td class="desc"><div>${esc(t.description)}</div><span class="chip"><i class="dot" style="background:${color}"></i>${c.label}</span></td>
+        <td class="num r ${t.type === 'income' ? 'pos' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount, { decimals: 2 })}</td>
+      </tr>`;
+    }).join('')}
+    ${fresh.length > shown.length ? `<tr><td colspan="3" class="muted small">… y ${fresh.length - shown.length} más</td></tr>` : ''}
+    </tbody>`;
+}
+
+$('#import-mapping').addEventListener('change', (e) => {
+  const key = e.target.dataset.map;
+  if (!key || !importJob) return;
+  const v = key === 'dateOrder' ? e.target.value : Number(e.target.value);
+  if (key === 'description') importJob.mapping.description = v >= 0 ? [v] : [];
+  else importJob.mapping[key] = v;
+  // Importe único o cargo/abono: elegir uno desactiva el otro.
+  if (key === 'amount' && v >= 0) { importJob.mapping.debit = -1; importJob.mapping.credit = -1; }
+  if ((key === 'debit' || key === 'credit') && v >= 0) importJob.mapping.amount = -1;
+  renderImportPreview();
+});
+$('#import-invert').addEventListener('change', () => importJob && renderImportPreview());
+
+$('#import-cancel').addEventListener('click', () => {
+  importJob = null;
+  $('#import-card').classList.add('hidden');
+});
+
+$('#import-confirm').addEventListener('click', () => {
+  if (!importJob) return;
+  const { fresh } = importItems();
+  if (!fresh.length) return;
+  state.transactions.push(...fresh.map((t) => ({ id: uid(), ...t })));
+  save();
+  if (importJob.signature) {
+    // Recuerda las columnas de este banco para la próxima vez.
+    const maps = loadImportMaps();
+    const { date, description, amount, debit, credit, dateOrder } = importJob.mapping;
+    maps[importJob.signature] = { date, description, amount, debit, credit, dateOrder, invert: $('#import-invert').checked };
+    try { localStorage.setItem(IMPORT_MAPS_KEY, JSON.stringify(maps)); } catch (e) { /* sin almacenamiento */ }
+  }
+  const latest = fresh.map((t) => t.date).sort().pop();
+  $('#list-month').value = latest.slice(0, 7);
+  importJob = null;
+  $('#import-card').classList.add('hidden');
+  renderMovimientos();
+  $('#tx-list').scrollIntoView({ behavior: 'smooth' });
+  toast(`${fresh.length} movimientos importados y clasificados`);
+});
 
 // ---------- AHORRO ----------
 
@@ -746,7 +844,7 @@ $('#goals-list').addEventListener('click', (e) => {
   } else {
     const v = prompt(`¿Cuánto aportas a "${g.name}"? (usa negativo para retirar)`);
     if (v === null) return;
-    const amt = parseAmount(v);
+    const amt = parseAmount(v) || 0;
     if (!amt) return;
     g.saved = Math.round((Number(g.saved) + amt) * 100) / 100;
     g.history = [...(g.history || []), { date: localDate(), amount: amt }];

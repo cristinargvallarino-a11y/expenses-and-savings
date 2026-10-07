@@ -139,11 +139,39 @@
         <div id="tx-list"></div>
         <div class="row gap wrap top-gap">
           <button class="btn ghost" id="copy-fixed">Copiar gastos fijos del mes anterior</button>
-          <label class="btn ghost file-btn">Importar CSV del banco
-            <input type="file" id="csv-input" accept=".csv,.txt" hidden>
+          <label class="btn ghost file-btn">Importar extracto del banco
+            <input type="file" id="csv-input" accept=".csv,.txt,.tsv,.xls,.xlsx" hidden>
           </label>
         </div>
-        <p class="muted small">CSV: una fila por movimiento con fecha, descripción e importe (negativo = gasto, positivo = ingreso). Se clasifican solos; revísalos después.</p>
+        <p class="muted small">Descarga los movimientos desde la web o app de tu banco en <b>CSV o Excel</b> y súbelos aquí. Antes de importar verás una vista previa para comprobar que se han leído bien.</p>
+      </article>
+
+      <article class="card hidden" id="import-card">
+        <div class="card-head">
+          <h2>Revisar importación</h2>
+          <span class="muted small" id="import-file"></span>
+        </div>
+        <div class="note" id="import-summary"></div>
+        <details id="import-adv">
+          <summary>¿Algo no cuadra? Cambiar columnas</summary>
+          <p class="muted small">Elige de qué columna sale cada dato; la vista previa se actualiza al momento.</p>
+        <div class="form-grid" id="import-mapping">
+          <label class="field">Fecha <select data-map="date"></select></label>
+          <label class="field">Concepto <select data-map="description"></select></label>
+          <label class="field">Importe <select data-map="amount"></select></label>
+          <label class="field">Cargo (gastos) <select data-map="debit"></select></label>
+          <label class="field">Abono (ingresos) <select data-map="credit"></select></label>
+          <label class="field">Formato de fecha
+            <select data-map="dateOrder"><option value="dmy">día/mes/año</option><option value="mdy">mes/día/año</option></select>
+          </label>
+        </div>
+        </details>
+        <label class="row gap small" style="margin-top:12px"><input type="checkbox" id="import-invert"> Mis gastos aparecen en positivo (p. ej. extracto de tarjeta de crédito)</label>
+        <div class="table-wrap"><table class="preview" id="import-table"></table></div>
+        <div class="form-actions top-gap">
+          <button class="btn primary" id="import-confirm">Importar</button>
+          <button class="btn ghost" id="import-cancel">Cancelar</button>
+        </div>
       </article>
     </section>
 
@@ -269,6 +297,7 @@
   <script src="config.js"></script>
   <script src="categories.js"></script>
   <script src="finance.js"></script>
+  <script src="importer.js"></script>
   <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>

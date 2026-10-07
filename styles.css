@@ -309,6 +309,24 @@ input[type="range"] { flex: 1; padding: 0; accent-color: var(--accent); box-shad
 .tx .actions button:hover { background: var(--surface-2); color: var(--text); }
 .empty { padding: 24px; text-align: center; color: var(--muted); font-style: italic; }
 
+/* ---------- Vista previa de importación ---------- */
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+.preview { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.preview th { text-align: left; font-weight: 500; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+.preview td { padding: 8px; border-bottom: 1px dashed var(--grid); vertical-align: top; }
+.preview .r { text-align: right; }
+.preview .desc { max-width: 0; width: 100%; }
+.preview .desc div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#import-adv { margin-top: 12px; }
+#import-adv summary { cursor: pointer; color: var(--accent); font-weight: 500; font-size: 0.9rem; }
+@media (max-width: 520px) {
+  .preview { font-size: 0.8rem; }
+  .preview th, .preview td { padding: 6px 4px; }
+  .preview .chip { font-size: 0.7rem; }
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); padding: 0; }
+
 /* ---------- Objetivos ---------- */
 .goal { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; margin-top: 12px; background: var(--page); }
 .goal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }

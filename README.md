@@ -21,7 +21,7 @@ App web para registrar **gastos, ingresos, ahorro e inversión**. Sin instalaci�
 **Movimientos**
 - Añade gastos e ingresos; la categoría **se sugiere sola** según la descripción (p. ej. "Mercadona" → Supermercado, "Ryanair" → Vuelos, "Booking" → Hoteles). Siempre puedes cambiarla.
 - Editar / borrar, copiar los gastos fijos (vivienda, facturas, seguros) del mes anterior.
-- Importar el CSV del banco (fecha, descripción, importe; negativo = gasto): se clasifica automáticamente.
+- Importar el extracto del banco en **CSV o Excel**: detecta solo las columnas (fecha, concepto, importe o cargo/abono; ignora el saldo), muestra una vista previa, evita duplicados y recuerda el formato de cada banco.
 
 **Ahorro e inversión**
 - Tu **ritmo de ahorro** = media de (ingresos − gastos) de los últimos meses cerrados (configurable, o fijado a mano).
@@ -44,6 +44,8 @@ Para activarlo hay que poner el *ID de cliente* de Google Cloud en `config.js`.
 | `categories.js` | Grupos, categorías y clasificador por palabras clave |
 | `finance.js` | Cálculos: resúmenes, ritmo de ahorro, tiempo hasta objetivo |
 | `app.js` | Estado, vistas y gráficos |
+| `importer.js` | Lectura de extractos bancarios (CSV/Excel) |
+| `lib/xlsx.full.min.js` | [SheetJS](https://sheetjs.com) 0.18.5 (Apache 2.0) para leer Excel |
 | `sync.js` | Inicio de sesión con Google y sincronización con Drive |
 | `config.js` | Configuración (ID de cliente de Google) |
 | `manifest.webmanifest`, `sw.js`, `icons/` | Instalación en el móvil y uso sin conexión |
