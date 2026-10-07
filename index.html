@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mis Finanzas</title>
+  <meta name="description" content="Registro de gastos, ingresos, ahorro e inversión">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">💶 Mis Finanzas</div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="resumen" role="tab">Resumen</button>
+      <button class="tab" data-view="movimientos" role="tab">Movimientos</button>
+      <button class="tab" data-view="ahorro" role="tab">Ahorro e inversión</button>
+      <button class="tab" data-view="ajustes" role="tab">Ajustes</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ RESUMEN ============ -->
+    <section id="view-resumen" class="view active">
+      <div class="month-bar">
+        <button class="icon-btn" id="prev-month" aria-label="Mes anterior">‹</button>
+        <h1 id="month-label"></h1>
+        <button class="icon-btn" id="next-month" aria-label="Mes siguiente">›</button>
+      </div>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid-2">
+        <article class="card">
+          <h2>¿A dónde va tu dinero?</h2>
+          <p class="muted small">Gasto del mes por tipo. El % es sobre tus ingresos del mes.</p>
+          <div id="group-bars"></div>
+        </article>
+        <article class="card">
+          <h2>✈️ Viajes</h2>
+          <p class="muted small">Vuelos, hoteles y resto de gastos de viaje, aparte del día a día. Barras: acumulado del año.</p>
+          <div id="travel-card"></div>
+        </article>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <h2>Regla 50 / 30 / 20</h2>
+          <p class="muted small">Referencia: 50% necesidades, 30% deseos (social, viajes, compras, suscripciones), 20% ahorro.</p>
+          <div id="rule-503020"></div>
+        </article>
+        <article class="card">
+          <h2>Top categorías del mes</h2>
+          <div id="top-categories"></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Evolución: ingresos vs. gastos</h2>
+          <div class="legend">
+            <span class="key"><i style="background:var(--series-income)"></i>Ingresos</span>
+            <span class="key"><i style="background:var(--series-expense)"></i>Gastos</span>
+          </div>
+        </div>
+        <div id="trend-chart" class="chart"></div>
+      </article>
+    </section>
+
+    <!-- ============ MOVIMIENTOS ============ -->
+    <section id="view-movimientos" class="view">
+      <article class="card">
+        <h2 id="form-title">Añadir movimiento</h2>
+        <form id="tx-form" autocomplete="off">
+          <div class="segmented" role="radiogroup">
+            <label><input type="radio" name="type" value="expense" checked><span>Gasto</span></label>
+            <label><input type="radio" name="type" value="income"><span>Ingreso</span></label>
+          </div>
+          <div class="form-grid">
+            <label class="field">Fecha
+              <input type="date" name="date" required>
+            </label>
+            <label class="field">Importe
+              <input type="number" name="amount" step="0.01" min="0.01" inputmode="decimal" placeholder="0,00" required>
+            </label>
+            <label class="field wide">Descripción
+              <input type="text" name="description" placeholder="Ej: Mercadona, Ryanair Madrid–Roma, cena con amigos…" required>
+            </label>
+            <label class="field wide">Categoría <span class="muted small" id="auto-hint"></span>
+              <select name="category" required></select>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn primary" id="tx-submit">Guardar</button>
+            <button type="button" class="btn ghost hidden" id="tx-cancel">Cancelar edición</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Movimientos</h2>
+          <div class="row gap">
+            <input type="month" id="list-month" aria-label="Mes">
+            <select id="list-filter" aria-label="Filtrar">
+              <option value="all">Todos</option>
+              <option value="income">Solo ingresos</option>
+              <option value="expense">Solo gastos</option>
+            </select>
+          </div>
+        </div>
+        <div id="tx-list"></div>
+        <div class="row gap wrap top-gap">
+          <button class="btn ghost" id="copy-fixed">Copiar gastos fijos del mes anterior</button>
+          <label class="btn ghost file-btn">Importar CSV del banco
+            <input type="file" id="csv-input" accept=".csv,.txt" hidden>
+          </label>
+        </div>
+        <p class="muted small">CSV: una fila por movimiento con fecha, descripción e importe (negativo = gasto, positivo = ingreso). Se clasifican solos; revísalos después.</p>
+      </article>
+    </section>
+
+    <!-- ============ AHORRO ============ -->
+    <section id="view-ahorro" class="view">
+      <article class="card">
+        <h2>Tu ritmo de ahorro</h2>
+        <div id="pace-box"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Objetivos</h2>
+          <button class="btn primary" id="new-goal">+ Nuevo objetivo</button>
+        </div>
+        <form id="goal-form" class="hidden" autocomplete="off">
+          <div class="form-grid">
+            <label class="field wide">Nombre
+              <input name="name" required placeholder="Ej: Fondo de emergencia, Entrada piso, Viaje a Japón">
+            </label>
+            <label class="field">Tipo
+              <select name="kind">
+                <option value="ahorro">Ahorro</option>
+                <option value="inversion">Inversión</option>
+              </select>
+            </label>
+            <label class="field">Objetivo (importe)
+              <input name="target" type="number" step="0.01" min="1" required>
+            </label>
+            <label class="field">Ya tengo
+              <input name="saved" type="number" step="0.01" min="0" value="0">
+            </label>
+            <label class="field">Aportación mensual
+              <input name="monthly" type="number" step="0.01" min="0" placeholder="Vacío = tu ritmo actual">
+            </label>
+            <label class="field">Rentabilidad anual esperada (%)
+              <input name="annualReturn" type="number" step="0.1" min="-50" max="50" value="0">
+            </label>
+            <label class="field">Fecha límite (opcional)
+              <input name="deadline" type="month">
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="btn primary" type="submit">Guardar objetivo</button>
+            <button class="btn ghost" type="button" id="goal-cancel">Cancelar</button>
+          </div>
+        </form>
+        <div id="goals-list"></div>
+      </article>
+
+      <article class="card">
+        <h2>¿Y si ahorrase más?</h2>
+        <p class="muted small">Mueve la barra para ver cuánto antes llegarías a cada objetivo ahorrando un extra al mes.</p>
+        <div class="row gap center">
+          <input type="range" id="whatif" min="0" max="1000" step="25" value="100">
+          <strong id="whatif-label"></strong>
+        </div>
+        <div id="whatif-results"></div>
+      </article>
+
+      <article class="card" id="projection-card">
+        <div class="card-head">
+          <h2>Proyección</h2>
+          <select id="projection-goal" aria-label="Objetivo"></select>
+        </div>
+        <div id="projection-chart" class="chart"></div>
+      </article>
+    </section>
+
+    <!-- ============ AJUSTES ============ -->
+    <section id="view-ajustes" class="view">
+      <article class="card">
+        <h2>Preferencias</h2>
+        <div class="form-grid">
+          <label class="field">Moneda
+            <select id="set-currency">
+              <option value="EUR">Euro (€)</option>
+              <option value="USD">Dólar ($)</option>
+              <option value="GBP">Libra (£)</option>
+              <option value="MXN">Peso mexicano</option>
+              <option value="ARS">Peso argentino</option>
+              <option value="COP">Peso colombiano</option>
+              <option value="CLP">Peso chileno</option>
+            </select>
+          </label>
+          <label class="field">Meses para calcular tu ritmo de ahorro
+            <select id="set-pace-months">
+              <option value="1">Último mes</option>
+              <option value="3">Últimos 3 meses</option>
+              <option value="6">Últimos 6 meses</option>
+              <option value="12">Últimos 12 meses</option>
+            </select>
+          </label>
+          <label class="field">Ritmo de ahorro manual (opcional)
+            <input id="set-manual-pace" type="number" step="0.01" min="0" placeholder="Vacío = calcular con tus datos">
+          </label>
+        </div>
+      </article>
+      <article class="card">
+        <h2>Tus datos</h2>
+        <p class="muted small">Todo se guarda solo en este navegador. Haz copias de seguridad de vez en cuando.</p>
+        <div class="row gap wrap">
+          <button class="btn" id="export-json">Descargar copia (JSON)</button>
+          <label class="btn file-btn">Restaurar copia
+            <input type="file" id="import-json" accept=".json" hidden>
+          </label>
+          <button class="btn" id="export-csv">Exportar movimientos (CSV)</button>
+          <button class="btn ghost" id="load-demo">Cargar datos de ejemplo</button>
+          <button class="btn danger" id="wipe">Borrar todo</button>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <div id="tooltip" role="tooltip"></div>
+  <div id="toast" aria-live="polite"></div>
+
+  <script src="categories.js"></script>
+  <script src="finance.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
