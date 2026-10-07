@@ -33,7 +33,7 @@ function plain(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
-/** ¿El concepto nombra a la persona titular? (p. ej. "To Cristina Rodríguez" con nombre "Cristina Rodriguez"). */
+/** ¿El concepto nombra a la persona titular? (p. ej. "To Ana García" con el nombre "Ana Garcia"). */
 function mentionsOwnName(description, ownNames) {
   const d = plain(description);
   return ownNames.some((name) => {
