@@ -1,5 +1,11 @@
 // Interfaz: estado, renderizado de vistas y gráficos SVG.
 
+// La app no debe mostrarse dentro de otra web (evita que te engañen con clics encubiertos).
+if (window.top !== window.self) {
+  document.documentElement.style.display = 'none';
+  try { window.top.location = window.location.href; } catch (e) { /* bloqueado: queda oculta */ }
+}
+
 const STORAGE_KEY = 'mis-finanzas-v1';
 
 const DEFAULT_STATE = {
@@ -24,16 +30,25 @@ function localDate(d = new Date()) {
 function localMonth() { return localDate().slice(0, 7); }
 
 function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const rnd = new Uint32Array(2);
+  crypto.getRandomValues(rnd);
+  return Date.now().toString(36) + rnd[0].toString(36) + rnd[1].toString(36);
+}
+
+/** Todo dato que llega de fuera del código pasa por aquí (ver validate.js). */
+function cleanState(raw) {
+  return sanitizeState(raw, {
+    defaults: DEFAULT_STATE,
+    groups: GROUPS,
+    builtinExpenseIds: BUILTIN_EXPENSE.map((c) => c.id),
+    builtinIncomeIds: BUILTIN_INCOME.map((c) => c.id),
+  });
 }
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...DEFAULT_STATE, ...parsed, settings: { ...DEFAULT_STATE.settings, ...parsed.settings } };
-    }
+    if (raw) return cleanState(JSON.parse(raw));
   } catch (e) { /* almacenamiento no disponible: empezamos de cero */ }
   return structuredClone(DEFAULT_STATE);
 }
@@ -88,8 +103,7 @@ function save() {
 
 /** Sustituye el estado entero (datos de la nube, cerrar sesión…) sin marcarlo como cambio local. */
 function replaceState(next) {
-  state = { ...structuredClone(DEFAULT_STATE), ...next, settings: { ...DEFAULT_STATE.settings, ...(next.settings || {}) } };
-  state.deleted = state.deleted || {};
+  state = cleanState(next);
   snapshot = indexState(state);
   persistLocal();
 }
@@ -251,8 +265,8 @@ function renderResumen() {
     .sort((a, b) => b.amount - a.amount);
   const max = Math.max(...groups.map((g) => g.amount), 1);
   $('#group-bars').innerHTML = groups.length ? groups.map((g) => `
-    <div class="hbar link" data-group="${g.id}" data-filter="g:${g.id}" role="button" tabindex="0">
-      <div class="name"><i class="dot" style="background:${g.color}"></i><span>${g.label}</span></div>
+    <div class="hbar link" data-group="${esc(g.id)}" data-filter="g:${esc(g.id)}" role="button" tabindex="0">
+      <div class="name"><i class="dot" style="background:${g.color}"></i><span>${esc(g.label)}</span></div>
       <div class="track"><div class="fill" style="width:${(g.amount / max) * 100}%;background:${g.color}"></div></div>
       <div class="val num">${money(g.amount)}<small>${s.income ? pct(g.amount / s.income) : pct(g.amount / s.expense)}</small></div>
     </div>`).join('') : `<div class="empty">Sin gastos este mes. Añádelos en <b>Movimientos</b>.</div>`;
@@ -280,8 +294,8 @@ function renderResumen() {
       <div><div class="muted small">En ${year} (hasta este mes)</div><div class="pace-big" style="font-size:1.5rem">${money(ytdTotal)}</div></div>
     </div>
     ${travelCats.map((c) => `
-      <div class="hbar link" data-filter="c:${c.id}" role="button" tabindex="0">
-        <div class="name"><span>${c.id === 'vuelos' ? '🛫' : c.id === 'hoteles' ? '🏨' : '🧳'} ${c.label}</span></div>
+      <div class="hbar link" data-filter="c:${esc(c.id)}" role="button" tabindex="0">
+        <div class="name"><span>${c.id === 'vuelos' ? '🛫' : c.id === 'hoteles' ? '🏨' : '🧳'} ${esc(c.label)}</span></div>
         <div class="track"><div class="fill" style="width:${ytdTotal ? ((ytd[c.id] || 0) / ytdTotal) * 100 : 0}%;background:var(--g-viajes)"></div></div>
         <div class="val num">${money(ytd[c.id] || 0)}<small>${money(s.byCategory[c.id] || 0)} este mes</small></div>
       </div>`).join('')}
@@ -319,8 +333,8 @@ function renderResumen() {
     const c = CATEGORY_BY_ID[id];
     const g = GROUPS[c.group];
     return `
-      <div class="hbar link" data-filter="c:${id}" role="button" tabindex="0">
-        <div class="name"><i class="dot" style="background:${g.color}"></i><span>${c.label}</span></div>
+      <div class="hbar link" data-filter="c:${esc(id)}" role="button" tabindex="0">
+        <div class="name"><i class="dot" style="background:${g.color}"></i><span>${esc(c.label)}</span></div>
         <div class="track"><div class="fill" style="width:${(amt / topMax) * 100}%;background:${g.color}"></div></div>
         <div class="val num">${money(amt)}</div>
       </div>`;
@@ -466,7 +480,7 @@ function renderAnual() {
   const gmax = Math.max(...groups.map((g) => g.amount), 1);
   $('#year-groups').innerHTML = groups.length ? groups.map((g) => `
     <div class="hbar">
-      <div class="name"><i class="dot" style="background:${g.color}"></i><span>${g.label}</span></div>
+      <div class="name"><i class="dot" style="background:${g.color}"></i><span>${esc(g.label)}</span></div>
       <div class="track"><div class="fill" style="width:${(g.amount / gmax) * 100}%;background:${g.color}"></div></div>
       <div class="val num">${money(g.amount)}<small>${money(g.amount / n)}/mes</small></div>
     </div>`).join('') : '<div class="empty">Sin gastos este año.</div>';
@@ -583,11 +597,11 @@ const txForm = $('#tx-form');
 function fillCategorySelect(type, selected) {
   const sel = txForm.elements.category;
   if (type === 'income') {
-    sel.innerHTML = INCOME_CATEGORIES.map((c) => `<option value="${c.id}">${c.label}</option>`).join('');
+    sel.innerHTML = INCOME_CATEGORIES.map((c) => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join('');
   } else {
     sel.innerHTML = Object.entries(GROUPS).map(([gid, g]) => `
-      <optgroup label="${g.label}">
-        ${EXPENSE_CATEGORIES.filter((c) => c.group === gid).map((c) => `<option value="${c.id}">${c.label}</option>`).join('')}
+      <optgroup label="${esc(g.label)}">
+        ${EXPENSE_CATEGORIES.filter((c) => c.group === gid).map((c) => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join('')}
       </optgroup>`).join('');
   }
   sel.insertAdjacentHTML('beforeend', '<option value="__new">➕ Nueva categoría…</option>');
@@ -650,7 +664,7 @@ txForm.addEventListener('submit', (e) => {
     type: currentType(),
     date: f.date.value,
     amount: Math.round(parseFloat(f.amount.value) * 100) / 100,
-    description: f.description.value.trim(),
+    description: f.description.value.trim().slice(0, 300),
     category: f.category.value,
   };
   if (!(tx.amount > 0) || !tx.date) return;
@@ -718,7 +732,7 @@ function showMovements(filter, month) {
 function fillListFilter() {
   const sel = $('#list-filter');
   const current = sel.value || 'all';
-  const opt = (v, label) => `<option value="${v}">${esc(label)}</option>`;
+  const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
   sel.innerHTML = `
     <optgroup label="Tipo">${opt('all', 'Todas las categorías')}${opt('expense', 'Solo gastos')}${opt('income', 'Solo ingresos')}</optgroup>
     ${Object.entries(GROUPS).map(([gid, g]) => `
@@ -767,11 +781,11 @@ function renderMovimientos() {
     const color = t.type === 'income' ? 'var(--series-income)' : GROUPS[c.group].color;
     const groupLabel = t.type === 'income' ? 'Ingreso' : GROUPS[c.group].label;
     return `
-      <div class="tx" data-id="${t.id}">
+      <div class="tx" data-id="${esc(t.id)}">
         <div class="date num">${t.date.slice(8, 10)}/${t.date.slice(5, 7)}${allMonths ? '/' + t.date.slice(2, 4) : ''}</div>
         <div class="desc">
           <div>${esc(t.description)}</div>
-          <div class="chip"><i class="dot" style="background:${color}"></i>${groupLabel} · ${c.label}</div>
+          <div class="chip"><i class="dot" style="background:${color}"></i>${esc(groupLabel)} · ${esc(c.label)}</div>
         </div>
         <div class="num ${t.type === 'income' ? 'pos' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount, { decimals: 2 })}</div>
         <div class="actions">
@@ -860,24 +874,24 @@ $('#csv-input').addEventListener('change', async (e) => {
   }
 });
 
-/** Lee la hoja con más filas de un Excel (.xlsx o .xls). La librería se carga solo cuando hace falta. */
-async function spreadsheetRows(buffer) {
-  if (!window.XLSX) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'lib/xlsx.full.min.js';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('No se pudo cargar el lector de Excel'));
-      document.head.appendChild(s);
-    });
-  }
-  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
-  let best = [];
-  for (const name of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
-    if (rows.length > best.length) best = rows;
-  }
-  return best.filter((r) => r.some((c) => String(c).trim() !== ''));
+/**
+ * Lee la hoja con más filas de un Excel (.xlsx o .xls) en un proceso aparte
+ * (xlsx-worker.js), aislado de la página y de tus datos.
+ */
+function spreadsheetRows(buffer) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('xlsx-worker.js');
+    const timer = setTimeout(() => { worker.terminate(); reject(new Error('El Excel tarda demasiado en leerse')); }, 20000);
+    worker.onmessage = (e) => {
+      clearTimeout(timer);
+      worker.terminate();
+      const msg = e.data || {};
+      if (!msg.ok || !Array.isArray(msg.rows)) { reject(new Error(msg.error || 'No se pudo leer el Excel')); return; }
+      resolve(msg.rows.filter((r) => Array.isArray(r) && r.some((c) => String(c).trim() !== '')));
+    };
+    worker.onerror = (err) => { clearTimeout(timer); worker.terminate(); reject(err); };
+    worker.postMessage(buffer, [buffer]);
+  });
 }
 
 function loadImportMaps() {
@@ -908,7 +922,8 @@ function importItems() {
     const k = txKey(it);
     if (existing.get(k)) { existing.set(k, existing.get(k) - 1); duplicates++; return; }
     const type = it.amount < 0 ? 'expense' : 'income';
-    const category = it.kind === 'returns' ? 'rendimientos' : autoCategory(it.description, type);
+    // Un rendimiento negativo (comisiones mayores que intereses) es un gasto normal, no un ingreso.
+    const category = it.kind === 'returns' && type === 'income' ? 'rendimientos' : autoCategory(it.description, type);
     const idx = list.length;
     const include = idx in importJob.toggles ? importJob.toggles[idx] : !it.transfer;
     list.push({ idx, include, transfer: it.transfer, section: it.section, type, date: it.date, amount: Math.round(Math.abs(it.amount) * 100) / 100, description: it.description, category });
@@ -981,7 +996,7 @@ function renderImportPreview() {
         <td class="num">${t.date.slice(8, 10)}/${t.date.slice(5, 7)}/${t.date.slice(2, 4)}</td>
         <td class="desc"><div>${esc(t.description)}</div>${t.transfer
           ? `<span class="badge">↔ ${t.transfer}</span>`
-          : `<span class="chip"><i class="dot" style="background:${color}"></i>${c.label}</span>`}</td>
+          : `<span class="chip"><i class="dot" style="background:${color}"></i>${esc(c.label)}</span>`}</td>
         <td class="num r ${t.type === 'income' ? 'pos' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount, { decimals: 2 })}</td>
       </tr>`;
     }).join('')}</tbody>`;
@@ -1133,10 +1148,10 @@ function goalCard(g, alloc) {
   }
   const progress = Math.min(1, saved / target);
   return `
-    <div class="goal" data-id="${g.id}">
+    <div class="goal" data-id="${esc(g.id)}">
       <div class="goal-head">
         <div><span class="goal-title">${esc(g.name)}</span><span class="badge">${g.kind === 'inversion' ? '📈 Inversión' : '🐷 Ahorro'}</span>
-          ${Number(g.annualReturn) ? `<span class="badge">${g.annualReturn}% anual</span>` : ''}</div>
+          ${Number(g.annualReturn) ? `<span class="badge">${Number(g.annualReturn)}% anual</span>` : ''}</div>
         <div class="row gap">
           <button class="btn small" data-act="add">+ Aportar</button>
           <button class="btn small ghost" data-act="edit" aria-label="Editar">✏️</button>
@@ -1176,7 +1191,7 @@ $('#goal-form').addEventListener('submit', (e) => {
   const f = e.target.elements;
   const goal = {
     id: editingGoalId || uid(),
-    name: f.name.value.trim(),
+    name: f.name.value.trim().slice(0, 80),
     kind: f.kind.value,
     target: Number(f.target.value),
     saved: Number(f.saved.value) || 0,
@@ -1184,6 +1199,8 @@ $('#goal-form').addEventListener('submit', (e) => {
     annualReturn: Number(f.annualReturn.value) || 0,
     deadline: f.deadline.value || '',
   };
+  const previous = editingGoalId && state.goals.find((g) => g.id === editingGoalId);
+  if (previous && previous.history) goal.history = previous.history;
   if (editingGoalId) state.goals = state.goals.map((g) => (g.id === editingGoalId ? goal : g));
   else state.goals.push(goal);
   editingGoalId = null;
@@ -1251,7 +1268,7 @@ function renderProjection(map) {
   card.classList.remove('hidden');
   const sel = $('#projection-goal');
   const prevVal = sel.value;
-  sel.innerHTML = state.goals.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  sel.innerHTML = state.goals.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
   sel.value = state.goals.some((g) => g.id === prevVal) ? prevVal : state.goals[0].id;
   const g = state.goals.find((x) => x.id === sel.value);
   const saved = Number(g.saved), target = Number(g.target), monthly = map[g.id].monthly;
@@ -1296,7 +1313,7 @@ function renderProjection(map) {
   svg += `<rect id="proj-hit" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent"/>`;
   svg += `</svg>`;
   const legend = `<div class="legend" style="margin-bottom:6px">
-      <span class="key"><i style="background:var(--series-projection)"></i>Saldo proyectado${Number(g.annualReturn) ? ` (con ${g.annualReturn}% anual)` : ''}</span>
+      <span class="key"><i style="background:var(--series-projection)"></i>Saldo proyectado${Number(g.annualReturn) ? ` (con ${Number(g.annualReturn)}% anual)` : ''}</span>
       ${Number(g.annualReturn) ? '<span class="key"><i style="background:var(--muted)"></i>Solo lo que aportas</span>' : ''}
       <span class="key muted">Aportando ${money(monthly)}/mes</span></div>`;
   el.innerHTML = legend + svg;
@@ -1333,12 +1350,12 @@ function renderCategoryList() {
     const n = usageCount(c.id);
     const count = n ? ` <span class="count">${n}</span>` : '';
     return `<span class="cat-pill ${c.custom || c.edited ? 'custom' : ''}">${esc(c.label)}${count}
-      <button type="button" data-cat-edit="${c.id}" aria-label="Editar ${esc(c.label)}">✏️</button>
-      ${c.custom ? `<button type="button" data-cat-del="${c.id}" aria-label="Borrar ${esc(c.label)}">🗑️</button>` : ''}</span>`;
+      <button type="button" data-cat-edit="${esc(c.id)}" aria-label="Editar ${esc(c.label)}">✏️</button>
+      ${c.custom ? `<button type="button" data-cat-del="${esc(c.id)}" aria-label="Borrar ${esc(c.label)}">🗑️</button>` : ''}</span>`;
   };
   const groups = Object.entries(GROUPS).map(([gid, g]) => `
     <div class="cat-group">
-      <h3><i class="dot" style="background:${g.color}"></i>${g.label}</h3>
+      <h3><i class="dot" style="background:${g.color}"></i>${esc(g.label)}</h3>
       <div class="cat-pills">${EXPENSE_CATEGORIES.filter((c) => c.group === gid).map(pill).join('')}</div>
     </div>`).join('');
   $('#cat-list').innerHTML = groups + `
@@ -1357,7 +1374,7 @@ function openCategoryDialog({ type = 'expense', editing = null, onSave = null } 
   catForm.querySelectorAll('input[name="type"]').forEach((r) => { r.disabled = Boolean(editing); });
   $('#cat-type').classList.toggle('hidden', Boolean(editing));
   catForm.elements.group.innerHTML = Object.entries(GROUPS)
-    .map(([gid, g]) => `<option value="${gid}">${g.label}</option>`).join('');
+    .map(([gid, g]) => `<option value="${esc(gid)}">${esc(g.label)}</option>`).join('');
   catForm.elements.group.value = editing ? editing.group : 'otros';
   catForm.elements.label.value = editing ? editing.label : '';
   catForm.elements.keywords.value = editing ? (editing.keywords || []).map((k) => k.trim()).join(', ') : '';
@@ -1441,7 +1458,7 @@ catForm.addEventListener('submit', (e) => {
   const f = catForm.elements;
   const { editing, onSave } = catDialogCtx || {};
   const type = editing ? editing.type : f.type.value;
-  const label = f.label.value.trim();
+  const label = f.label.value.trim().slice(0, 40);
   if (!label) return;
   const clash = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]
     .find((c) => c.label.toLowerCase() === label.toLowerCase() && (!editing || c.id !== editing.id));
@@ -1539,7 +1556,8 @@ $('#export-csv').addEventListener('click', () => {
   const rows = [['fecha', 'tipo', 'grupo', 'categoria', 'descripcion', 'importe']];
   for (const t of [...state.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = CATEGORY_BY_ID[t.category] || CATEGORY_BY_ID.otros;
-    rows.push([t.date, t.type === 'income' ? 'ingreso' : 'gasto', t.type === 'income' ? '' : GROUPS[c.group].label, c.label, t.description, String(t.amount).replace('.', ',')]);
+    const group = t.type === 'income' ? '' : (GROUPS[c.group] || GROUPS.otros).label;
+    rows.push([t.date, t.type === 'income' ? 'ingreso' : 'gasto', group, csvSafe(c.label), csvSafe(t.description), String(t.amount).replace('.', ',')]);
   }
   download('movimientos.csv', '﻿' + rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n'), 'text/csv');
 });
@@ -1550,7 +1568,7 @@ $('#import-json').addEventListener('change', async (e) => {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.transactions) || !Array.isArray(data.goals)) throw new Error('formato');
     if (!confirm('Esto reemplazará tus datos actuales por los de la copia. ¿Continuar?')) return;
-    state = { ...structuredClone(DEFAULT_STATE), ...data, settings: { ...DEFAULT_STATE.settings, ...data.settings }, deleted: state.deleted };
+    state = { ...cleanState(data), deleted: state.deleted };
     save();
     renderAll();
     toast('Copia restaurada');
@@ -1563,9 +1581,11 @@ $('#import-json').addEventListener('change', async (e) => {
 $('#wipe').addEventListener('click', () => {
   if (!confirm('¿Seguro que quieres borrar TODOS tus datos? No se puede deshacer.')) return;
   state = { ...structuredClone(DEFAULT_STATE), deleted: state.deleted };
+  lsDel(IMPORT_MAPS_KEY);
+  if (isConnected()) lsSet(ROTATE_KEY, '1');
   save();
   renderAll();
-  toast(isConnected() ? 'Datos borrados (también en Google Drive)' : 'Datos borrados');
+  toast(isConnected() ? 'Datos borrados (también en Google Drive al sincronizar)' : 'Datos borrados');
 });
 $('#load-demo').addEventListener('click', () => {
   if (state.transactions.length && !confirm('Se añadirán datos de ejemplo a los tuyos. ¿Continuar?')) return;
@@ -1619,6 +1639,9 @@ function demoData() {
 const OWNER_KEY = 'mf-owner';
 const CONNECTED_KEY = 'mf-connected';
 const SILENT_AT_KEY = 'mf-silent-at';
+const PENDING_KEY = 'mf-pending';   // hay cambios locales que aún no se han subido a Drive
+const ROTATE_KEY = 'mf-rotate';     // tras "Borrar todo": sustituir el archivo de Drive por uno nuevo
+let verifiedToken = null;           // token cuya cuenta ya se ha comprobado en esta sesión
 let syncStatus = 'off';
 let syncing = false;
 let syncAgain = false;
@@ -1680,7 +1703,8 @@ function renderAccount() {
         ? '<button class="btn primary" data-cloud="reconnect">Reconectar con Google</button>'
         : '<button class="btn" data-cloud="sync">Sincronizar ahora</button>'}
       <button class="btn ghost" data-cloud="signout">Cerrar sesión</button>
-    </div>`;
+    </div>
+    <p class="muted small">¿Dispositivo compartido? Cierra sesión aquí al terminar y también en tu cuenta de Google del navegador; si no, quien lo use después podría abrir tus datos.</p>`;
 }
 
 function startSignIn(reconnect) {
@@ -1703,6 +1727,7 @@ $('#account-box').addEventListener('click', (e) => {
 
 function scheduleSync() {
   if (!cloudOn() || !isConnected()) return;
+  lsSet(PENDING_KEY, '1');
   if (!Cloud.token()) { setSyncStatus('reconnect'); return; }
   clearTimeout(syncTimer);
   syncTimer = setTimeout(syncNow, 1200);
@@ -1716,16 +1741,28 @@ async function syncNow() {
   clearTimeout(syncTimer);
   setSyncStatus('syncing');
   try {
+    // Nunca se sube nada sin comprobar antes de quién es la cuenta de este token.
+    if (!(await ensureAccount())) return;
     const remote = await Cloud.download();
     driveFileId = remote.id;
+    // Lo que viene de Drive se valida igual que una copia restaurada.
+    const remoteData = remote.data ? cleanState(remote.data) : null;
     // Se junta con el estado actual (ya incluye lo que se haya tocado mientras descargaba).
-    const merged = mergeStates(state, remote.data);
+    const merged = mergeStates(state, remoteData);
     const localChanged = canonicalState(merged) !== canonicalState(state);
     replaceState(merged);
     if (localChanged) renderAll();
-    if (!remote.data || canonicalState(state) !== canonicalState(remote.data)) {
+    if (lsGet(ROTATE_KEY) && driveFileId) {
+      // Tras "Borrar todo": archivo nuevo y se elimina el anterior con sus versiones antiguas.
+      const old = driveFileId;
+      driveFileId = await Cloud.upload(null, state);
+      await Cloud.remove(old);
+      lsDel(ROTATE_KEY);
+    } else if (!remoteData || canonicalState(state) !== canonicalState(remoteData)) {
       driveFileId = await Cloud.upload(driveFileId, state);
     }
+    lsDel(ROTATE_KEY);
+    if (!syncAgain) lsDel(PENDING_KEY);
     setSyncStatus('ok');
   } catch (e) {
     handleSyncError(e);
@@ -1741,37 +1778,55 @@ function handleSyncError(e) {
   else { setSyncStatus('error'); console.error(e); }
 }
 
-async function onSignedIn() {
+/**
+ * Comprueba a qué cuenta de Google pertenece el token actual antes de usarlo.
+ * Si es otra cuenta distinta de la dueña de los datos de este dispositivo, pide
+ * confirmación y no mezcla datos. Devuelve false si no se debe sincronizar.
+ */
+async function ensureAccount() {
+  const token = Cloud.token();
+  if (!token) return false;
+  if (verifiedToken === token) return true;
   const email = await Cloud.userEmail();
+  if (typeof email !== 'string' || !email) throw new Error('Cuenta de Google desconocida');
   const owner = lsGet(OWNER_KEY);
   if (owner && owner !== email) {
     const ok = confirm(`Los datos de este dispositivo son de ${owner} y has entrado como ${email}.\n\n`
       + `Si continúas, aquí se cargarán los datos de ${email}. Los de ${owner} siguen en su Google Drive `
       + '(salvo cambios que no se llegaran a sincronizar).');
-    if (!ok) { Cloud.signOut(); setSyncStatus('reconnect'); return; }
+    if (!ok) { Cloud.signOut(); verifiedToken = null; setSyncStatus('reconnect'); return false; }
     replaceState(structuredClone(DEFAULT_STATE));
+    lsDel(PENDING_KEY);
+    lsDel(ROTATE_KEY);
     renderAll();
   }
-  const firstTime = !isConnected();
   lsSet(OWNER_KEY, email);
   lsSet(CONNECTED_KEY, '1');
+  verifiedToken = token;
+  return true;
+}
+
+async function onSignedIn() {
+  const firstTime = !isConnected();
+  // La primera vez se marca como conectada para que syncNow funcione; la cuenta se comprueba dentro.
+  if (firstTime) lsSet(CONNECTED_KEY, '1');
   await syncNow();
-  if (firstTime && syncStatus === 'ok') toast(`Conectada a Google como ${email}`);
+  if (firstTime && syncStatus !== 'ok' && !lsGet(OWNER_KEY)) lsDel(CONNECTED_KEY);
+  if (firstTime && syncStatus === 'ok') toast(`Conectada a Google como ${lsGet(OWNER_KEY)}`);
 }
 
 async function signOut() {
   if (!confirm('Se cerrará la sesión y se borrarán los datos de ESTE dispositivo. Seguirán guardados en tu Google Drive. ¿Continuar?')) return;
-  if (Cloud.token()) {
-    await syncNow();
-    if (syncStatus !== 'ok' && !confirm('No se han podido subir los últimos cambios a Google. Si sigues, se perderán. ¿Cerrar sesión igualmente?')) return;
-  }
+  if (Cloud.token()) await syncNow();
+  if (lsGet(PENDING_KEY) && !confirm('Hay cambios que todavía no se han subido a Google (lo último que apuntaste o un "Borrar todo"). '
+    + 'Si cierras sesión ahora, se perderán. Para no perderlos, pulsa Cancelar y luego "Reconectar con Google".\n\n¿Cerrar sesión igualmente?')) return;
   Cloud.signOut();
-  lsDel(OWNER_KEY);
-  lsDel(CONNECTED_KEY);
+  verifiedToken = null;
+  for (const k of [OWNER_KEY, CONNECTED_KEY, PENDING_KEY, ROTATE_KEY, SILENT_AT_KEY, IMPORT_MAPS_KEY]) lsDel(k);
   replaceState(structuredClone(DEFAULT_STATE));
   setSyncStatus('off');
   renderAll();
-  toast('Sesión cerrada');
+  toast('Sesión cerrada. Si el dispositivo es compartido, cierra también tu sesión de Google en el navegador.');
 }
 
 async function initCloud() {

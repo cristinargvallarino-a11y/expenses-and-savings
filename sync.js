@@ -170,13 +170,18 @@ const Cloud = (() => {
     return (await res.json()).id;
   }
 
+  /** Borra un archivo de la carpeta de la app (y con él su historial de versiones). */
+  async function remove(id) {
+    await api(`${DRIVE}/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   function signOut() {
     const t = token();
     if (t) fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(t), { method: 'POST' }).catch(() => {});
     del(TOKEN_KEY);
   }
 
-  return { enabled, signIn, handleRedirect, token, userEmail, download, upload, signOut, AuthError };
+  return { enabled, signIn, handleRedirect, token, userEmail, download, upload, remove, signOut, AuthError };
 })();
 
 if (typeof module !== 'undefined') {

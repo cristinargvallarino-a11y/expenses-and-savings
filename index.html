@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Lo único que esta página puede cargar o contactar: sus propios archivos y la API de Google. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <title>Mis Finanzas</title>
   <meta name="description" content="Registro de gastos, ingresos, ahorro e inversión">
   <meta name="theme-color" content="#f9f0e7" media="(prefers-color-scheme: light)">
@@ -14,9 +17,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/favicon-64.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=DM+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="fonts.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -171,7 +172,7 @@
               <input type="number" name="amount" step="0.01" min="0.01" inputmode="decimal" placeholder="0,00" required>
             </label>
             <label class="field wide">Descripción
-              <input type="text" name="description" placeholder="Ej: Mercadona, Ryanair Madrid–Roma, cena con amigos…" required>
+              <input type="text" name="description" maxlength="300" placeholder="Ej: Mercadona, Ryanair Madrid–Roma, cena con amigos…" required>
             </label>
             <label class="field wide">Categoría <span class="muted small" id="auto-hint"></span>
               <select name="category" required></select>
@@ -257,7 +258,7 @@
         <form id="goal-form" class="hidden" autocomplete="off">
           <div class="form-grid">
             <label class="field wide">Nombre
-              <input name="name" required placeholder="Ej: Fondo de emergencia, Entrada piso, Viaje a Japón">
+              <input name="name" required maxlength="80" placeholder="Ej: Fondo de emergencia, Entrada piso, Viaje a Japón">
             </label>
             <label class="field">Tipo
               <select name="kind">
@@ -397,6 +398,7 @@
   <div id="toast" aria-live="polite"></div>
 
   <script src="config.js"></script>
+  <script src="validate.js"></script>
   <script src="categories.js"></script>
   <script src="finance.js"></script>
   <script src="importer.js"></script>
