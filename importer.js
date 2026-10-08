@@ -358,7 +358,9 @@ function extractRows(rows, m, { invert = false, ownNames = [] } = {}) {
     const description = decodeEntities(m.description.map((i) => normText(row[i])).filter(Boolean)
       .filter((v, i, arr) => arr.indexOf(v) === i).join(' · '));
     if (!date || amount === null || amount === 0) { if (row.some((c) => normText(c))) skipped++; continue; }
-    if (/^(saldo|total|suma)/i.test(description)) { skipped++; continue; }
+    // Solo las filas que son exactamente un total o un saldo ("Saldo final", "Total:"),
+    // no comercios como TotalEnergies o Suma, ni conceptos que empiecen así.
+    if (/^(saldo|total|suma)(\s+(final|inicial|anterior|disponible|actual|del periodo|del período|general))?\s*[:.]?$/i.test(description)) { skipped++; continue; }
     const sourceCategory = m.category >= 0 ? normText(row[m.category]) : '';
     let transfer = '';
     if (investment) transfer = 'inversión';

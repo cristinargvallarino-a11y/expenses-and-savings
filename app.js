@@ -15,6 +15,7 @@ const DEFAULT_STATE = {
   deleted: {},
 };
 
+let lastStoredRaw = null; // lo último que esta pestaña leyó o escribió en el navegador
 let state = loadState();
 let viewMonth = localMonth();
 let editingTxId = null;
@@ -48,7 +49,7 @@ function cleanState(raw) {
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return cleanState(JSON.parse(raw));
+    if (raw) { lastStoredRaw = raw; return cleanState(JSON.parse(raw)); }
   } catch (e) { /* almacenamiento no disponible: empezamos de cero */ }
   return structuredClone(DEFAULT_STATE);
 }
@@ -64,35 +65,79 @@ function withoutTimestamp(r) {
 }
 
 function indexState(s) {
+  const st = s.settings || {};
+  const { customCategories = [], categoryOverrides = {}, updatedAt, ...scalars } = st;
   return {
     transactions: new Map(s.transactions.map((r) => [r.id, withoutTimestamp(r)])),
     goals: new Map(s.goals.map((r) => [r.id, withoutTimestamp(r)])),
-    settings: withoutTimestamp(s.settings),
+    customCategories: new Map(customCategories.map((c) => [c.id, withoutTimestamp(c)])),
+    categoryOverrides: new Map(Object.entries(categoryOverrides).map(([k, o]) => [k, withoutTimestamp(o)])),
+    settings: JSON.stringify(scalars),
     deleted: { ...(s.deleted || {}) },
   };
 }
 
+/** La fecha más alta que ya conoce este estado (para que las nuevas nunca vayan hacia atrás). */
+function latestStamp(s) {
+  let max = 0;
+  const see = (v) => { if (typeof v === 'number' && v > max) max = v; };
+  for (const r of s.transactions) see(r.updatedAt);
+  for (const r of s.goals) see(r.updatedAt);
+  for (const v of Object.values(s.deleted || {})) see(v);
+  const st = s.settings || {};
+  see(st.updatedAt);
+  for (const c of st.customCategories || []) see(c.updatedAt);
+  for (const o of Object.values(st.categoryOverrides || {})) see(o && o.updatedAt);
+  return max;
+}
+
 function stampChanges() {
-  const now = Date.now();
+  // Si otro dispositivo dejó una fecha algo adelantada, la nueva la supera igualmente.
+  const now = Math.max(Date.now(), latestStamp(state) + 1);
   const deleted = { ...snapshot.deleted, ...(state.deleted || {}) };
-  for (const key of ['transactions', 'goals']) {
+  const track = (items, previous) => {
     const present = new Set();
-    for (const r of state[key]) {
+    for (const r of items) {
       present.add(r.id);
-      if (!r.updatedAt || snapshot[key].get(r.id) !== withoutTimestamp(r)) r.updatedAt = now;
+      if (!r.updatedAt || previous.get(r.id) !== withoutTimestamp(r)) r.updatedAt = now;
       // Algo que está presente (p. ej. al restaurar una copia) vuelve a existir.
       if (deleted[r.id]) { delete deleted[r.id]; r.updatedAt = now; }
     }
-    for (const id of snapshot[key].keys()) if (!present.has(id)) deleted[id] = now;
+    for (const id of previous.keys()) if (!present.has(id)) deleted[id] = now;
+  };
+  track(state.transactions, snapshot.transactions);
+  track(state.goals, snapshot.goals);
+  const st = state.settings;
+  st.customCategories = st.customCategories || [];
+  track(st.customCategories, snapshot.customCategories);
+  // Cambios en las categorías de serie: uno a uno; deshacer uno deja una marca vacía con fecha.
+  const overrides = { ...(st.categoryOverrides || {}) };
+  for (const [k, o] of Object.entries(overrides)) {
+    if (!o.updatedAt || snapshot.categoryOverrides.get(k) !== withoutTimestamp(o)) overrides[k] = { ...o, updatedAt: now };
   }
-  if (!state.settings.updatedAt || withoutTimestamp(state.settings) !== snapshot.settings) state.settings.updatedAt = now;
+  for (const k of snapshot.categoryOverrides.keys()) if (!(k in overrides)) overrides[k] = { updatedAt: now };
+  st.categoryOverrides = overrides;
+  const { customCategories, categoryOverrides, updatedAt, ...scalars } = st;
+  if (!st.updatedAt || JSON.stringify(scalars) !== snapshot.settings) st.updatedAt = now;
   state.deleted = deleted;
   snapshot = indexState(state);
 }
 
-function persistLocal() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch (e) { toast('No se pudo guardar en este navegador. Descarga una copia en Ajustes.'); }
+/**
+ * Guarda en el navegador. Si otra pestaña o ventana de la app guardó algo
+ * mientras tanto, se junta antes de escribir para no borrar lo suyo.
+ */
+function persistLocal({ overwrite = false } = {}) {
+  try {
+    const current = localStorage.getItem(STORAGE_KEY);
+    if (!overwrite && current && current !== lastStoredRaw) {
+      state = cleanState(mergeStates(state, cleanState(JSON.parse(current))));
+      snapshot = indexState(state);
+    }
+    const raw = JSON.stringify(state);
+    localStorage.setItem(STORAGE_KEY, raw);
+    lastStoredRaw = raw;
+  } catch (e) { toast('No se pudo guardar en este navegador. Descarga una copia en Ajustes.'); }
 }
 
 function save() {
@@ -101,12 +146,33 @@ function save() {
   scheduleSync();
 }
 
-/** Sustituye el estado entero (datos de la nube, cerrar sesión…) sin marcarlo como cambio local. */
-function replaceState(next) {
+/**
+ * Sustituye el estado entero (datos de la nube, cerrar sesión…) sin marcarlo
+ * como cambio local. `overwrite` descarta también lo que haya en otras pestañas.
+ */
+function replaceState(next, { overwrite = false } = {}) {
   state = cleanState(next);
   snapshot = indexState(state);
-  persistLocal();
+  persistLocal({ overwrite });
 }
+
+// Otra pestaña o ventana de la app ha guardado: se incorpora aquí al momento.
+window.addEventListener('storage', (e) => {
+  try {
+    if (e.key === STORAGE_KEY && e.newValue) {
+      state = cleanState(mergeStates(state, cleanState(JSON.parse(e.newValue))));
+      snapshot = indexState(state);
+      lastStoredRaw = e.newValue;
+      renderAll();
+    } else if (e.key === 'mf-connected' && e.oldValue && !e.newValue) {
+      // Se cerró la sesión de Google en otra pestaña: aquí también se borran los datos.
+      syncSession++;
+      replaceState(structuredClone(DEFAULT_STATE), { overwrite: true });
+      setSyncStatus('off');
+      renderAll();
+    }
+  } catch (err) { /* datos ilegibles: se ignoran */ }
+});
 
 function money(x, opts = {}) {
   return new Intl.NumberFormat('es-ES', {
@@ -237,8 +303,24 @@ function renderHello() {
   $('#quote').textContent = `“${quoteForMonth(viewMonth)}”`;
 }
 
+const BACKUP_KEY = 'mf-last-backup';
+
+/**
+ * Si los datos solo están en este navegador (sin Google) y no hay una copia
+ * reciente, se avisa: Safari borra los datos de las webs que no visitas en 7 días.
+ */
+function renderBackupNote() {
+  const el = $('#backup-note');
+  if (!el) return;
+  const last = Number(lsGet(BACKUP_KEY)) || 0;
+  const show = !isConnected() && state.transactions.length > 0 && Date.now() - last > 30 * 86400000;
+  el.classList.toggle('hidden', !show);
+  $('#backup-google').classList.toggle('hidden', !cloudOn());
+}
+
 function renderResumen() {
   renderHello();
+  renderBackupNote();
   $('#month-label').textContent = monthName(viewMonth);
   const s = monthSummary(state.transactions, viewMonth, CATEGORY_BY_ID);
   const prev = monthSummary(state.transactions, addMonths(viewMonth, -1), CATEGORY_BY_ID);
@@ -926,7 +1008,7 @@ function importItems() {
     const category = it.kind === 'returns' && type === 'income' ? 'rendimientos' : autoCategory(it.description, type);
     const idx = list.length;
     const include = idx in importJob.toggles ? importJob.toggles[idx] : !it.transfer;
-    list.push({ idx, include, transfer: it.transfer, section: it.section, type, date: it.date, amount: Math.round(Math.abs(it.amount) * 100) / 100, description: it.description, category });
+    list.push({ idx, include, transfer: it.transfer, section: it.section, type, date: it.date, amount: Math.round(Math.abs(it.amount) * 100) / 100, description: String(it.description).slice(0, 300), category });
   });
   return { list, skipped, duplicates };
 }
@@ -1049,6 +1131,11 @@ $('#import-confirm').addEventListener('click', () => {
   if (!importJob) return;
   const chosen = importItems().list.filter((t) => t.include);
   if (!chosen.length) return;
+  // El navegador guarda unos 5 MB por web: mejor avisar que dejar de guardar sin querer.
+  if (JSON.stringify(state).length + JSON.stringify(chosen).length > 4500000) {
+    toast('Son demasiados movimientos para guardarlos en este navegador. Importa un periodo más corto.');
+    return;
+  }
   state.transactions.push(...chosen.map((t) => ({
     id: uid(), type: t.type, date: t.date, amount: t.amount, description: t.description, category: t.category,
   })));
@@ -1551,7 +1638,11 @@ function download(name, content, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-$('#export-json').addEventListener('click', () => download(`mis-finanzas-${localDate()}.json`, JSON.stringify(state, null, 2), 'application/json'));
+$('#export-json').addEventListener('click', () => {
+  download(`mis-finanzas-${localDate()}.json`, JSON.stringify(state, null, 2), 'application/json');
+  lsSet(BACKUP_KEY, String(Date.now()));
+  renderBackupNote();
+});
 $('#export-csv').addEventListener('click', () => {
   const rows = [['fecha', 'tipo', 'grupo', 'categoria', 'descripcion', 'importe']];
   for (const t of [...state.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
@@ -1642,6 +1733,8 @@ const SILENT_AT_KEY = 'mf-silent-at';
 const PENDING_KEY = 'mf-pending';   // hay cambios locales que aún no se han subido a Drive
 const ROTATE_KEY = 'mf-rotate';     // tras "Borrar todo": sustituir el archivo de Drive por uno nuevo
 let verifiedToken = null;           // token cuya cuenta ya se ha comprobado en esta sesión
+let syncSession = 0;                // cambia al cerrar sesión: una sincronización en vuelo se descarta
+let syncDone = Promise.resolve();   // se resuelve cuando termina la sincronización en curso
 let syncStatus = 'off';
 let syncing = false;
 let syncAgain = false;
@@ -1738,37 +1831,48 @@ async function syncNow() {
   if (!Cloud.token()) { setSyncStatus('reconnect'); return; }
   if (syncing) { syncAgain = true; return; }
   syncing = true;
+  const session = syncSession;
+  let release;
+  syncDone = new Promise((r) => { release = r; });
   clearTimeout(syncTimer);
   setSyncStatus('syncing');
+  const stillValid = () => session === syncSession;
   try {
     // Nunca se sube nada sin comprobar antes de quién es la cuenta de este token.
-    if (!(await ensureAccount())) return;
+    if (!(await ensureAccount(session)) || !stillValid()) return;
     const remote = await Cloud.download();
-    driveFileId = remote.id;
+    if (!stillValid()) return;
     // Lo que viene de Drive se valida igual que una copia restaurada.
-    const remoteData = remote.data ? cleanState(remote.data) : null;
-    // Se junta con el estado actual (ya incluye lo que se haya tocado mientras descargaba).
-    const merged = mergeStates(state, remoteData);
+    const remotes = remote.datas.filter(Boolean).map((d) => cleanState(d));
+    // Normalmente hay un archivo; si hubiera varios, se juntan todos.
+    let merged = state;
+    for (const r of remotes) merged = mergeStates(merged, r);
     const localChanged = canonicalState(merged) !== canonicalState(state);
     replaceState(merged);
     if (localChanged) renderAll();
-    if (lsGet(ROTATE_KEY) && driveFileId) {
-      // Tras "Borrar todo": archivo nuevo y se elimina el anterior con sus versiones antiguas.
-      const old = driveFileId;
-      driveFileId = await Cloud.upload(null, state);
-      await Cloud.remove(old);
-      lsDel(ROTATE_KEY);
-    } else if (!remoteData || canonicalState(state) !== canonicalState(remoteData)) {
-      driveFileId = await Cloud.upload(driveFileId, state);
+    if (remote.ids.length && (lsGet(ROTATE_KEY) || remote.ids.length > 1)) {
+      // Tras "Borrar todo" (o si había varios archivos): uno nuevo, y se eliminan
+      // TODOS los anteriores con sus versiones antiguas. Si algo falla, se reintenta.
+      const newId = await Cloud.upload(null, state);
+      driveFileId = newId;
+      for (const id of remote.ids) if (id !== newId) await Cloud.remove(id);
+    } else if (!remote.datas[0] || canonicalState(state) !== canonicalState(remote.datas[0])) {
+      // Se compara con el archivo tal cual estaba: si al validarlo se corrigió algo
+      // (p. ej. una fecha del futuro), se sube ya corregido para que no vuelva a cambiar.
+      driveFileId = await Cloud.upload(remote.ids[0] || null, state);
     }
+    if (!stillValid()) return;
     lsDel(ROTATE_KEY);
     if (!syncAgain) lsDel(PENDING_KEY);
     setSyncStatus('ok');
   } catch (e) {
-    handleSyncError(e);
+    if (stillValid()) handleSyncError(e);
   } finally {
     syncing = false;
-    if (syncAgain) { syncAgain = false; syncNow(); }
+    release();
+    const again = syncAgain && stillValid();
+    syncAgain = false;
+    if (again) syncNow();
   }
 }
 
@@ -1783,11 +1887,12 @@ function handleSyncError(e) {
  * Si es otra cuenta distinta de la dueña de los datos de este dispositivo, pide
  * confirmación y no mezcla datos. Devuelve false si no se debe sincronizar.
  */
-async function ensureAccount() {
+async function ensureAccount(session = syncSession) {
   const token = Cloud.token();
   if (!token) return false;
   if (verifiedToken === token) return true;
   const email = await Cloud.userEmail();
+  if (session !== syncSession) return false;
   if (typeof email !== 'string' || !email) throw new Error('Cuenta de Google desconocida');
   const owner = lsGet(OWNER_KEY);
   if (owner && owner !== email) {
@@ -1795,7 +1900,7 @@ async function ensureAccount() {
       + `Si continúas, aquí se cargarán los datos de ${email}. Los de ${owner} siguen en su Google Drive `
       + '(salvo cambios que no se llegaran a sincronizar).');
     if (!ok) { Cloud.signOut(); verifiedToken = null; setSyncStatus('reconnect'); return false; }
-    replaceState(structuredClone(DEFAULT_STATE));
+    replaceState(structuredClone(DEFAULT_STATE), { overwrite: true });
     lsDel(PENDING_KEY);
     lsDel(ROTATE_KEY);
     renderAll();
@@ -1817,13 +1922,17 @@ async function onSignedIn() {
 
 async function signOut() {
   if (!confirm('Se cerrará la sesión y se borrarán los datos de ESTE dispositivo. Seguirán guardados en tu Google Drive. ¿Continuar?')) return;
-  if (Cloud.token()) await syncNow();
+  toast('Cerrando sesión…');
+  await syncDone;                      // si ya había una sincronización en marcha, se espera
+  if (Cloud.token() && lsGet(PENDING_KEY)) { await syncNow(); await syncDone; }
   if (lsGet(PENDING_KEY) && !confirm('Hay cambios que todavía no se han subido a Google (lo último que apuntaste o un "Borrar todo"). '
     + 'Si cierras sesión ahora, se perderán. Para no perderlos, pulsa Cancelar y luego "Reconectar con Google".\n\n¿Cerrar sesión igualmente?')) return;
+  syncSession++;                       // cualquier sincronización que quede en vuelo ya no escribe nada
+  clearTimeout(syncTimer);
   Cloud.signOut();
   verifiedToken = null;
   for (const k of [OWNER_KEY, CONNECTED_KEY, PENDING_KEY, ROTATE_KEY, SILENT_AT_KEY, IMPORT_MAPS_KEY]) lsDel(k);
-  replaceState(structuredClone(DEFAULT_STATE));
+  replaceState(structuredClone(DEFAULT_STATE), { overwrite: true });
   setSyncStatus('off');
   renderAll();
   toast('Sesión cerrada. Si el dispositivo es compartido, cierra también tu sesión de Google en el navegador.');
@@ -1881,6 +1990,11 @@ window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+// Pide al navegador que no borre los datos de la app por falta de espacio o de uso.
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+$('#backup-download').addEventListener('click', () => $('#export-json').click());
+$('#backup-google').addEventListener('click', () => onCloudAction('signin'));
 
 refreshCategories();
 $('#list-month').value = localMonth();

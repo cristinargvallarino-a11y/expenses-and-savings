@@ -80,7 +80,8 @@ function builtinCategory(id) {
 function setCustomCategories(list = [], overrides = {}) {
   const tweak = (c) => {
     const o = overrides && overrides[c.id];
-    if (!o) return { ...c, keywords: [...c.keywords] };
+    // Sin cambios reales (o un "restaurar original" pendiente de sincronizar): la de serie.
+    if (!o || (!o.label && !o.group && !Array.isArray(o.keywords))) return { ...c, keywords: [...c.keywords] };
     const keywords = Array.isArray(o.keywords) ? [...o.keywords] : [...c.keywords];
     return {
       ...c,

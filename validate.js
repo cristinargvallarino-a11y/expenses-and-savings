@@ -22,6 +22,14 @@ function num(v, { min = -Infinity, max = Infinity, fallback = 0 } = {}) {
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
 
+/**
+ * Fecha de último cambio. Un dispositivo con el reloj adelantado no puede dejar
+ * fechas "del futuro" que ganen siempre al sincronizar: se recortan a ahora + 1 día.
+ */
+function stamp(v) {
+  return num(v, { min: 0, max: Date.now() + 86400000, fallback: num(v, { min: 0 }) ? Date.now() : 0 });
+}
+
 function list(v, max = MAX_ITEMS) {
   return Array.isArray(v) ? v.slice(0, max) : [];
 }
@@ -60,7 +68,10 @@ function cleanSettings(s, defaults, groups, builtinIds) {
       if (!label) return null;
       const type = c.type === 'income' ? 'income' : 'expense';
       if (type === 'expense' && !groups[c.group]) return null;
-      return { id: c.id, label, type, group: type === 'expense' ? c.group : undefined, keywords: cleanKeywords(c.keywords) };
+      const out = { id: c.id, label, type, group: type === 'expense' ? c.group : undefined, keywords: cleanKeywords(c.keywords) };
+      const updatedAt = stamp(c.updatedAt);
+      if (updatedAt) out.updatedAt = updatedAt;
+      return out;
     }).filter(Boolean),
     categoryOverrides: cleanMap(s.categoryOverrides, (k) => builtinIds.has(k), (o) => {
       if (!o || typeof o !== 'object' || Array.isArray(o)) return undefined;
@@ -69,10 +80,13 @@ function cleanSettings(s, defaults, groups, builtinIds) {
       if (label) r.label = label;
       if (typeof o.group === 'string' && groups[o.group]) r.group = o.group;
       if (Array.isArray(o.keywords)) r.keywords = cleanKeywords(o.keywords);
+      // Un cambio deshecho ("restaurar original") se guarda vacío con su fecha, para sincronizarlo.
+      const updatedAt = stamp(o.updatedAt);
+      if (updatedAt) r.updatedAt = updatedAt;
       return Object.keys(r).length ? r : undefined;
     }),
   };
-  const updatedAt = num(s.updatedAt, { min: 0 });
+  const updatedAt = stamp(s.updatedAt);
   if (updatedAt) out.updatedAt = updatedAt;
   return out;
 }
@@ -100,7 +114,7 @@ function sanitizeState(raw, ctx) {
     const valid = t.type === 'income' ? incomeIds : expenseIds;
     const category = typeof t.category === 'string' && valid.has(t.category) ? t.category : (t.type === 'income' ? 'otros_ing' : 'otros');
     const out = { id: t.id, type: t.type, date: t.date, amount, description: str(t.description, 300), category };
-    const updatedAt = num(t.updatedAt, { min: 0 });
+    const updatedAt = stamp(t.updatedAt);
     if (updatedAt) out.updatedAt = updatedAt;
     return out;
   }).filter(Boolean);
@@ -122,15 +136,12 @@ function sanitizeState(raw, ctx) {
       .filter((h) => h && typeof h === 'object' && typeof h.date === 'string' && DATE_RE.test(h.date) && Number.isFinite(Number(h.amount)))
       .map((h) => ({ date: h.date, amount: Number(h.amount) }));
     if (history.length) out.history = history;
-    const updatedAt = num(g.updatedAt, { min: 0 });
+    const updatedAt = stamp(g.updatedAt);
     if (updatedAt) out.updatedAt = updatedAt;
     return out;
   }).filter(Boolean);
 
-  const deleted = cleanMap(src.deleted, (k) => ID_RE.test(k), (v) => {
-    const n = num(v, { min: 0, fallback: NaN });
-    return Number.isFinite(n) ? n : undefined;
-  }, MAX_ITEMS);
+  const deleted = cleanMap(src.deleted, (k) => ID_RE.test(k), (v) => stamp(v) || undefined, MAX_ITEMS);
 
   return { settings, transactions, goals, deleted };
 }
@@ -138,7 +149,7 @@ function sanitizeState(raw, ctx) {
 /** Evita que un texto exportado a CSV se interprete como fórmula al abrirlo en Excel. */
 function csvSafe(text) {
   const s = String(text ?? '');
-  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  return /^[=+\-@\t\r＝＋－＠]/.test(s) ? `'${s}` : s;
 }
 
 if (typeof module !== 'undefined') {

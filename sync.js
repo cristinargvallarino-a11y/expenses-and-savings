@@ -8,9 +8,11 @@
 // - mergeStates() junta los datos de dos dispositivos registro a registro.
 
 /**
- * Junta dos estados. Por cada movimiento/objetivo gana la versión con
- * `updatedAt` más reciente; un registro borrado (en `deleted`, id → fecha)
- * desaparece salvo que se haya modificado después de borrarlo.
+ * Junta dos estados. Por cada movimiento, objetivo o categoría propia gana la
+ * versión con `updatedAt` más reciente; un registro borrado (en `deleted`,
+ * id → fecha) desaparece salvo que se haya modificado después de borrarlo.
+ * Los ajustes se juntan campo a campo, para no perder lo que se cambió en otro
+ * dispositivo (reglas aprendidas, categorías, cambios en las de serie).
  */
 function mergeStates(a, b) {
   a = a || {};
@@ -27,27 +29,49 @@ function mergeStates(a, b) {
     }
     return [...byId.values()].filter((r) => !(deleted[r.id] >= (r.updatedAt || 0)));
   };
-  const settingsA = a.settings || {};
-  const settingsB = b.settings || {};
-  const settings = (settingsB.updatedAt || 0) > (settingsA.updatedAt || 0) ? settingsB : settingsA;
   return {
-    settings,
+    settings: mergeSettings(a.settings || {}, b.settings || {}, mergeList),
     transactions: mergeList(a.transactions, b.transactions),
     goals: mergeList(a.goals, b.goals),
     deleted,
   };
 }
 
-/** Representación estable de un estado para saber si dos estados son iguales. */
+function mergeSettings(sa, sb, mergeList) {
+  const [older, newer] = (sb.updatedAt || 0) > (sa.updatedAt || 0) ? [sa, sb] : [sb, sa];
+  const out = { ...older, ...newer };
+  // Reglas aprendidas: se suman las de los dos lados (si chocan, gana el más reciente).
+  out.rules = { ...(older.rules || {}), ...(newer.rules || {}) };
+  // Categorías propias: una a una, respetando las borradas.
+  out.customCategories = mergeList(sa.customCategories || [], sb.customCategories || []);
+  // Cambios a las de serie: uno a uno; un "restaurar original" deja una marca vacía con fecha.
+  const overrides = {};
+  for (const src of [sa.categoryOverrides || {}, sb.categoryOverrides || {}]) {
+    for (const [id, o] of Object.entries(src)) {
+      if (!overrides[id] || (o.updatedAt || 0) > (overrides[id].updatedAt || 0)) overrides[id] = o;
+    }
+  }
+  out.categoryOverrides = overrides;
+  return out;
+}
+
+/** Representación estable (claves ordenadas a todos los niveles) para comparar estados. */
 function canonicalState(s) {
+  const sortDeep = (v) => {
+    if (Array.isArray(v)) return v.map(sortDeep);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortDeep(v[k])]));
+    }
+    return v;
+  };
   const sortById = (list = []) => [...list].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
-  const sortKeys = (o) => Object.fromEntries(Object.entries(o || {}).sort(([x], [y]) => (x < y ? -1 : 1)));
-  return JSON.stringify({
-    settings: sortKeys(s.settings),
-    transactions: sortById(s.transactions).map(sortKeys),
-    goals: sortById(s.goals).map(sortKeys),
-    deleted: sortKeys(s.deleted),
-  });
+  const settings = { ...(s.settings || {}), customCategories: sortById((s.settings || {}).customCategories) };
+  return JSON.stringify(sortDeep({
+    settings,
+    transactions: sortById(s.transactions),
+    goals: sortById(s.goals),
+    deleted: s.deleted || {},
+  }));
 }
 
 const Cloud = (() => {
@@ -135,21 +159,30 @@ const Cloud = (() => {
     return info.email;
   }
 
-  async function findFileId() {
+  /** Ids de todos los archivos de datos de la app (el más reciente primero). */
+  async function listFileIds() {
     const q = encodeURIComponent(`name='${FILE_NAME}' and trashed=false`);
     const res = await api(`${DRIVE}/files?spaces=appDataFolder&q=${q}&fields=files(id)&orderBy=modifiedTime desc`);
     const { files } = await res.json();
-    return files && files.length ? files[0].id : null;
+    return (files || []).map((f) => f.id).filter((id) => typeof id === 'string');
   }
 
-  /** Descarga los datos guardados en Drive. { id, data } (data null si aún no hay). */
-  async function download() {
-    const id = await findFileId();
-    if (!id) return { id: null, data: null };
-    const res = await api(`${DRIVE}/files/${id}?alt=media`);
+  async function readFile(id) {
+    const res = await api(`${DRIVE}/files/${encodeURIComponent(id)}?alt=media`);
     const text = await res.text();
-    try { return { id, data: JSON.parse(text) }; }
-    catch (e) { return { id, data: null }; }
+    try { return JSON.parse(text); } catch (e) { return null; }
+  }
+
+  /**
+   * Descarga los datos guardados en Drive. Normalmente hay un solo archivo; si
+   * hubiera varios (p. ej. dos dispositivos que lo crearon a la vez), los
+   * devuelve todos para juntarlos. { ids: [más reciente primero], datas: [...] }
+   */
+  async function download() {
+    const ids = await listFileIds();
+    const datas = [];
+    for (const id of ids) datas.push(await readFile(id));
+    return { ids, datas };
   }
 
   async function upload(id, data) {
@@ -185,5 +218,5 @@ const Cloud = (() => {
 })();
 
 if (typeof module !== 'undefined') {
-  module.exports = { mergeStates, canonicalState };
+  module.exports = { mergeStates, mergeSettings, canonicalState };
 }

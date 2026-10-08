@@ -428,3 +428,4 @@ dialog .segmented { margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .view, .fill, .btn { animation: none; transition: none; }
 }
+.backup-note { margin: 0 0 18px; border: 1px solid var(--border); }

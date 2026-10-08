@@ -1,7 +1,7 @@
 // Service worker: permite abrir la app sin conexión.
 // Estrategia "red primero": siempre intenta descargar la última versión y,
 // si no hay conexión, usa la copia guardada.
-const CACHE = 'mis-finanzas-v12';
+const CACHE = 'mis-finanzas-v13';
 const SHELL = [
   './', 'index.html', 'styles.css', 'categories.js', 'finance.js', 'config.js', 'validate.js', 'importer.js', 'sync.js', 'xlsx-worker.js', 'fonts.css', 'app.js',
   'manifest.webmanifest', 'img/hero.jpg', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
