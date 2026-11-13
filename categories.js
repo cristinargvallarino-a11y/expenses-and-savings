@@ -59,9 +59,10 @@ const INCOME_CATEGORIES = [
   { id: 'otros_ing',   label: 'Otros ingresos',          keywords: ['bizum', 'dinero añadido', 'devolucion', 'devolución', 'reembolso', 'venta', 'wallapop', 'vinted', 'regalo'] },
 ];
 
-const CATEGORY_BY_ID = Object.fromEntries(
+// Sin prototipo: un id como "constructor" o "__proto__" no encuentra nada heredado.
+const CATEGORY_BY_ID = Object.assign(Object.create(null), Object.fromEntries(
   [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].map((c) => [c.id, c])
-);
+));
 
 const BUILTIN_EXPENSE = EXPENSE_CATEGORIES.map((c) => ({ ...c, keywords: [...c.keywords] }));
 const BUILTIN_INCOME = INCOME_CATEGORIES.map((c) => ({ ...c, keywords: [...c.keywords] }));
@@ -86,7 +87,7 @@ function setCustomCategories(list = [], overrides = {}) {
     return {
       ...c,
       label: o.label || c.label,
-      group: c.group && o.group && GROUPS[o.group] ? o.group : c.group,
+      group: c.group && o.group && Object.hasOwn(GROUPS, o.group) ? o.group : c.group,
       keywords,
       // Las palabras que añadió la persona mandan sobre las de serie.
       userKeywords: new Set(keywords.filter((k) => !c.keywords.includes(k))),
@@ -94,7 +95,7 @@ function setCustomCategories(list = [], overrides = {}) {
     };
   };
   const custom = (list || []).filter((c) => c && c.id && c.label);
-  const expense = custom.filter((c) => c.type !== 'income' && GROUPS[c.group])
+  const expense = custom.filter((c) => c.type !== 'income' && Object.hasOwn(GROUPS, c.group))
     .map((c) => ({ ...c, keywords: c.keywords || [], custom: true }));
   const income = custom.filter((c) => c.type === 'income')
     .map((c) => ({ ...c, keywords: c.keywords || [], custom: true }));
@@ -122,8 +123,9 @@ function ruleKey(description) {
 
 function classify(description, type, rules) {
   // Primero, lo que la persona ya corrigió a mano para ese mismo concepto.
-  const learned = rules && rules[ruleKey(description)];
-  if (learned && CATEGORY_BY_ID[learned]) {
+  const key = ruleKey(description);
+  const learned = rules && Object.hasOwn(rules, key) ? rules[key] : undefined;
+  if (learned && Object.hasOwn(CATEGORY_BY_ID, learned)) {
     const isIncome = INCOME_CATEGORIES.some((c) => c.id === learned);
     if (isIncome === (type === 'income')) return learned;
   }

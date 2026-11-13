@@ -51,7 +51,7 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) { lastStoredRaw = raw; return cleanState(JSON.parse(raw)); }
   } catch (e) { /* almacenamiento no disponible: empezamos de cero */ }
-  return structuredClone(DEFAULT_STATE);
+  return cleanState(structuredClone(DEFAULT_STATE));
 }
 
 // Para sincronizar entre dispositivos, cada movimiento/objetivo lleva la fecha
@@ -140,7 +140,10 @@ function persistLocal({ overwrite = false } = {}) {
   } catch (e) { toast('No se pudo guardar en este navegador. Descarga una copia en Ajustes.'); }
 }
 
+let changeSeq = 0; // sube con cada cambio guardado: así se sabe si una sincronización los incluyó todos
+
 function save() {
+  changeSeq++;
   stampChanges();
   persistLocal();
   scheduleSync();
@@ -164,10 +167,13 @@ window.addEventListener('storage', (e) => {
       snapshot = indexState(state);
       lastStoredRaw = e.newValue;
       renderAll();
-    } else if (e.key === 'mf-connected' && e.oldValue && !e.newValue) {
-      // Se cerró la sesión de Google en otra pestaña: aquí también se borran los datos.
+    } else if (e.key === 'mf-owner' && e.oldValue && e.newValue !== e.oldValue) {
+      // En otra pestaña se cerró la sesión de Google o se entró con otra cuenta:
+      // aquí también se descartan los datos de la cuenta anterior.
       syncSession++;
+      verifiedToken = null;
       replaceState(structuredClone(DEFAULT_STATE), { overwrite: true });
+      if (e.newValue) { location.reload(); return; }
       setSyncStatus('off');
       renderAll();
     }
@@ -1672,6 +1678,7 @@ $('#import-json').addEventListener('change', async (e) => {
 $('#wipe').addEventListener('click', () => {
   if (!confirm('¿Seguro que quieres borrar TODOS tus datos? No se puede deshacer.')) return;
   state = { ...structuredClone(DEFAULT_STATE), deleted: state.deleted };
+  state.settings.rulesResetAt = Date.now();
   lsDel(IMPORT_MAPS_KEY);
   if (isConnected()) lsSet(ROTATE_KEY, '1');
   save();
@@ -1837,6 +1844,7 @@ async function syncNow() {
   clearTimeout(syncTimer);
   setSyncStatus('syncing');
   const stillValid = () => session === syncSession;
+  const seqAtStart = changeSeq;
   try {
     // Nunca se sube nada sin comprobar antes de quién es la cuenta de este token.
     if (!(await ensureAccount(session)) || !stillValid()) return;
@@ -1863,7 +1871,8 @@ async function syncNow() {
     }
     if (!stillValid()) return;
     lsDel(ROTATE_KEY);
-    if (!syncAgain) lsDel(PENDING_KEY);
+    // Solo si no se ha guardado nada mientras sincronizaba (eso irá en la siguiente).
+    if (!syncAgain && changeSeq === seqAtStart) lsDel(PENDING_KEY);
     setSyncStatus('ok');
   } catch (e) {
     if (stillValid()) handleSyncError(e);

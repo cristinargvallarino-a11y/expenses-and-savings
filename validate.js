@@ -61,13 +61,13 @@ function cleanSettings(s, defaults, groups, builtinIds) {
     paceMonths: [1, 3, 6, 12].includes(Number(s.paceMonths)) ? Number(s.paceMonths) : defaults.paceMonths,
     manualPace: s.manualPace === '' || s.manualPace == null ? '' : String(num(s.manualPace, { min: -1e9, max: 1e9, fallback: '' })),
     ownNames: str(s.ownNames, 300),
-    rules: cleanMap(s.rules, (k) => k.length <= 300, (v) => (typeof v === 'string' && CAT_ID_RE.test(v) ? v : undefined)),
+    rules: cleanMap(s.rules, (k) => k.length <= 300, (v) => (typeof v === 'string' && CAT_ID_RE.test(v) && !FORBIDDEN_KEYS.has(v) && v !== 'hasOwnProperty' ? v : undefined)),
     customCategories: list(s.customCategories, 300).map((c) => {
       if (!c || typeof c !== 'object' || !CUSTOM_CAT_ID_RE.test(c.id)) return null;
       const label = str(c.label, 40).trim();
       if (!label) return null;
       const type = c.type === 'income' ? 'income' : 'expense';
-      if (type === 'expense' && !groups[c.group]) return null;
+      if (type === 'expense' && !Object.hasOwn(groups, c.group)) return null;
       const out = { id: c.id, label, type, group: type === 'expense' ? c.group : undefined, keywords: cleanKeywords(c.keywords) };
       const updatedAt = stamp(c.updatedAt);
       if (updatedAt) out.updatedAt = updatedAt;
@@ -78,7 +78,7 @@ function cleanSettings(s, defaults, groups, builtinIds) {
       const r = {};
       const label = str(o.label, 40).trim();
       if (label) r.label = label;
-      if (typeof o.group === 'string' && groups[o.group]) r.group = o.group;
+      if (typeof o.group === 'string' && Object.hasOwn(groups, o.group)) r.group = o.group;
       if (Array.isArray(o.keywords)) r.keywords = cleanKeywords(o.keywords);
       // Un cambio deshecho ("restaurar original") se guarda vacío con su fecha, para sincronizarlo.
       const updatedAt = stamp(o.updatedAt);
@@ -88,6 +88,9 @@ function cleanSettings(s, defaults, groups, builtinIds) {
   };
   const updatedAt = stamp(s.updatedAt);
   if (updatedAt) out.updatedAt = updatedAt;
+  // Fecha del último "Borrar todo": las reglas aprendidas antes no vuelven al sincronizar.
+  const rulesResetAt = stamp(s.rulesResetAt);
+  if (rulesResetAt) out.rulesResetAt = rulesResetAt;
   return out;
 }
 
@@ -99,6 +102,8 @@ function sanitizeState(raw, ctx) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const builtinIds = new Set([...ctx.builtinExpenseIds, ...ctx.builtinIncomeIds]);
   const settings = cleanSettings(src.settings, ctx.defaults.settings, ctx.groups, builtinIds);
+  const knownIds = new Set([...builtinIds, ...settings.customCategories.map((c) => c.id)]);
+  for (const k of Object.keys(settings.rules)) if (!knownIds.has(settings.rules[k])) delete settings.rules[k];
   const expenseIds = new Set([...ctx.builtinExpenseIds, ...settings.customCategories.filter((c) => c.type === 'expense').map((c) => c.id)]);
   const incomeIds = new Set([...ctx.builtinIncomeIds, ...settings.customCategories.filter((c) => c.type === 'income').map((c) => c.id)]);
   const seen = new Set();

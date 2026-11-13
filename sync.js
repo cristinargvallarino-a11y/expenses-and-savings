@@ -40,8 +40,12 @@ function mergeStates(a, b) {
 function mergeSettings(sa, sb, mergeList) {
   const [older, newer] = (sb.updatedAt || 0) > (sa.updatedAt || 0) ? [sa, sb] : [sb, sa];
   const out = { ...older, ...newer };
-  // Reglas aprendidas: se suman las de los dos lados (si chocan, gana el más reciente).
-  out.rules = { ...(older.rules || {}), ...(newer.rules || {}) };
+  // Reglas aprendidas: se suman las de los dos lados (si chocan, gana el más reciente),
+  // salvo las de un lado que sean anteriores a un "Borrar todo" del otro.
+  const reset = Math.max(sa.rulesResetAt || 0, sb.rulesResetAt || 0);
+  const keep = (side) => ((side.updatedAt || 0) > reset || (side.rulesResetAt || 0) === reset ? side.rules || {} : {});
+  out.rules = { ...keep(older), ...keep(newer) };
+  if (reset) out.rulesResetAt = reset;
   // Categorías propias: una a una, respetando las borradas.
   out.customCategories = mergeList(sa.customCategories || [], sb.customCategories || []);
   // Cambios a las de serie: uno a uno; un "restaurar original" deja una marca vacía con fecha.

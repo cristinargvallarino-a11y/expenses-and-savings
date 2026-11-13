@@ -45,6 +45,10 @@ Para activarlo hay que poner el *ID de cliente* de Google Cloud en `config.js`.
 - **Sin terceros:** sin analítica ni publicidad; las tipografías están alojadas en la propia app.
 - **Dispositivos compartidos:** usa "Cerrar sesión" al terminar y cierra también tu sesión de Google en ese navegador.
 
+## Pruebas
+
+`node tests/run.js` abre la app en Chromium (Playwright) y comprueba el funcionamiento, la importación de extractos, las categorías, la sincronización con un Google simulado, los ataques conocidos y la integridad de los datos. No usa datos reales: los extractos de prueba se generan en el momento. `node tests/run.js seguridad` ejecuta solo un grupo.
+
 ## Estructura
 
 | Archivo | Contenido |

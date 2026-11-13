@@ -25,6 +25,10 @@ const HEADER_PATTERNS = {
 // Movimientos entre tus propias cuentas: no son gasto ni ingreso real.
 const TRANSFER_CATEGORY = /^(cambio|exchange|traspaso|transfer between)/i;
 const TRANSFER_DESCRIPTION = /^(recarga|top[- ]?up|conversi[oó]n a|exchanged? to|(a|desde|to|from) (eur|gbp|usd|chf)\b)|cartera flexible|cuenta remunerada|cuenta de inversi[oó]n|investment account|\bhucha\b|\bpocket\b|\bvault\b|traspaso (entre|a) (mis|tus) cuentas/i;
+// Filas de resumen del extracto ("Saldo final", "Saldo al 31/03", "Total cargos", "Suma y sigue"),
+// pero no comercios como TotalEnergies o Suma ni conceptos que solo empiecen así.
+const SUMMARY_ROW = /^(saldo|total|suma)(\s+(inicial|final|anterior|disponible|actual|general|contable|y sigue|del periodo|del período|(de\s+)?(gastos|ingresos|cargos|abonos|movimientos)))*(\s+(a|al|en|el)?\s*\d{1,2}[\/.-]\d{1,2}([\/.-]\d{2,4})?)?\s*[:.]?$/i;
+
 // Secciones de inversión (compras/ventas de acciones o fondos): es dinero que ya
 // estaba invertido, no gasto ni ingreso. Los dividendos sí cuentan, aparte.
 const INVESTMENT_SECTION = /corretaje|brokerage|unidades que se han vendido|units sold|robo.?advisor|investment|inversi[oó]n/i;
@@ -360,7 +364,7 @@ function extractRows(rows, m, { invert = false, ownNames = [] } = {}) {
     if (!date || amount === null || amount === 0) { if (row.some((c) => normText(c))) skipped++; continue; }
     // Solo las filas que son exactamente un total o un saldo ("Saldo final", "Total:"),
     // no comercios como TotalEnergies o Suma, ni conceptos que empiecen así.
-    if (/^(saldo|total|suma)(\s+(final|inicial|anterior|disponible|actual|del periodo|del período|general))?\s*[:.]?$/i.test(description)) { skipped++; continue; }
+    if (SUMMARY_ROW.test(description)) { skipped++; continue; }
     const sourceCategory = m.category >= 0 ? normText(row[m.category]) : '';
     let transfer = '';
     if (investment) transfer = 'inversión';
